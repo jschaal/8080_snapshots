@@ -1,21 +1,17 @@
 === VBA EXPORT: 8080 Model Current.xlsm ===
-Timestamp: 2/12/2026 6:54:31 AM
+Timestamp: 2/12/2026 8:36:22 AM
 ================================================================================
 
-''' Component: ThisWorkbook (Document (Sheet/Workbook))
-''' =====================================================================
+''' Component: ThisWorkbook
 ''' [No code]
 
-''' Component: Sheet1 (Document (Sheet/Workbook))
-''' =====================================================================
+''' Component: Sheet1
 ''' [No code]
 
-''' Component: Sheet2 (Document (Sheet/Workbook))
-''' =====================================================================
+''' Component: Sheet2
 ''' [No code]
 
-''' Component: Assemble (Module)
-''' =====================================================================
+''' Component: Assemble
 Option Explicit
 
 '--- Assemble.bas ---
@@ -302,8 +298,7 @@ Sub Demo()
 End Sub
 
 
-''' Component: clsCPU (Class)
-''' =====================================================================
+''' Component: clsCPU
 ' clsCPU.cls — DROP-IN (Parity LUT + Hex$, SP via SetReg, UI deferral preserved)
 Option Explicit
 
@@ -931,8 +926,7 @@ End Function
 
 
 
-''' Component: clsStack (Class)
-''' =====================================================================
+''' Component: clsStack
 '''
 ' --- clsStack.cls ---
 '''
@@ -1003,8 +997,7 @@ Public Property Get Count() As Long
     Count = m_Count
 End Property
 
-''' Component: clsRegisterState (Class)
-''' =====================================================================
+''' Component: clsRegisterState
 '''
 ' -- clsRegisterState.cls
 ' Inside clsRegisterState
@@ -1015,8 +1008,7 @@ Public RegisterName As String
 
 
 
-''' Component: clsLabels (Class)
-''' =====================================================================
+''' Component: clsLabels
 '''
 ' clsLabels
 '''
@@ -1163,8 +1155,7 @@ End Function
 '''
 
 
-''' Component: clsLabelRecord (Class)
-''' =====================================================================
+''' Component: clsLabelRecord
 '''
 ' -- clsLabelRecord.cls
 Public clsLabelType As String
@@ -1177,16 +1168,13 @@ Public clsData As String
 
 
 
-''' Component: Sheet4 (Document (Sheet/Workbook))
-''' =====================================================================
+''' Component: Sheet4
 ''' [No code]
 
-''' Component: Sheet5 (Document (Sheet/Workbook))
-''' =====================================================================
+''' Component: Sheet5
 ''' [No code]
 
-''' Component: TestRunner (Module)
-''' =====================================================================
+''' Component: TestRunner
 ' TestRunner.bas  — DROP-IN (with per-test console progress)
 Option Explicit
 Public Sub RunDynamicTests()
@@ -1390,8 +1378,7 @@ Public Function ConsoleContainsInOrder(ParamArray parts() As Variant) As Boolean
 End Function
 
 
-''' Component: usrForm (UserForm)
-''' =====================================================================
+''' Component: usrForm
 Public Sub ClearConsole()
     Me.tbConsole.Locked = False
     Me.tbConsole.text = vbNullString
@@ -1427,8 +1414,7 @@ Public Sub Prt(ByVal s As String, Optional ByVal prtSpace As Boolean = False)
     If Sheets("CPU").Range("Step").value = 1 Then DoEvents
 End Sub
 
-''' Component: Exportcode (Module)
-''' =====================================================================
+''' Component: Exportcode
 ' Requires: Tools > References... > check "Microsoft Visual Basic for Applications Extensibility 5.3"
 ' Also: File > Options > Trust Center > Trust Center Settings... > Macro Settings > check
 '       "Trust access to the VBA project object model" (temporarily, to export)
@@ -1438,55 +1424,82 @@ Option Explicit
 ' Requires reference: Microsoft Visual Basic for Applications Extensibility 5.3
 ' And Trust Center: "Trust access to the VBA project object model"
 Public Sub ExportAllVbaToSingleText()
-    Dim vbProj As VBIDE.VBProject
-    Dim vbComp As VBIDE.VBComponent
-    Dim codeMod As VBIDE.CodeModule
+    Dim vbProj As Object ' Changed to Object for late binding safety
+    Dim vbComp As Object
+    Dim codeMod As Object
     Dim f As Integer
-    Dim outputDir As String
+    Dim outputDir As Variant
+    Dim baseName As String
+    Dim timeStamp As String
+    Dim finalFileName As String
     Dim outputPath As String
-    Dim outFileName As String
-    Dim lineNum As Long, lastLine As Long
-    Dim fso As Object  ' Scripting.FileSystemObject
+    Dim fullPathXlsm As String
+    Dim lastLine As Long
+    Dim fso As Object
 
-    ' >>>>>>>>  CHANGE: export target directory  <<<<<<<<
-    outputDir = "C:\Users\jschaal\source\repos\Assembler 8080\Assembler 8080\Source\"
-    outFileName = CleanFileName(ActiveWorkbook.name)
-    outputPath = outputDir & outFileName & "_" & Format(Now, "yyyy-mm-dd_HHNNSS") & ".txt"
-
-    ' Ensure directory exists (create it if needed)
-    On Error Resume Next
-    Set fso = CreateObject("Scripting.FileSystemObject")
-    If Not fso.FolderExists(outputDir) Then
-        fso.CreateFolder outputDir
+    ' 1. Create Timestamp
+    timeStamp = Format(Now, "yyyy-mm-dd_HHmm")
+    
+    ' 2. Get Workbook name without extension
+    baseName = ThisWorkbook.name
+    If InStrRev(baseName, ".") > 0 Then
+        baseName = Left(baseName, InStrRev(baseName, ".") - 1)
     End If
-    On Error GoTo 0
+    
+    ' 3. Combine for a consistent filename
+    finalFileName = baseName & "_" & timeStamp
 
-    ' Open the file for output
-    f = FreeFile
-    Open outputPath For Output As #f
+    ' 4. Define Output Paths (Fixed array size to 1 for two items)
+    Dim outputs(1) As String
+    outputs(0) = "C:\Users\jschaal\source\repos\Assembler 8080\Assembler 8080\Source\"
+    outputs(1) = "C:\Users\jschaal\OneDrive - Distribuidora La Florida S.A\Dev\asm\snapshots\"
+    
+    Set fso = CreateObject("Scripting.FileSystemObject")
 
-    Set vbProj = ThisWorkbook.VBProject
+    For Each outputDir In outputs
+        ' Ensure directory ends with backslash
+        If Right(outputDir, 1) <> "\" Then outputDir = outputDir & "\"
+        
+        ' Set specific file paths
+        outputPath = outputDir & finalFileName & ".txt"
+        fullPathXlsm = outputDir & finalFileName & ".xlsm"
 
-    Print #f, "=== VBA EXPORT: " & ThisWorkbook.name & " ==="
-    Print #f, "Timestamp: " & Now
-    Print #f, String(80, "=")
+        ' Ensure directory exists
+        On Error Resume Next
+        If Not fso.FolderExists(outputDir) Then fso.CreateFolder outputDir
+        On Error GoTo 0
+    
+        ' Open the file for text output
+        f = FreeFile
+        Open outputPath For Output As #f
 
-    For Each vbComp In vbProj.VBComponents
-        Print #f, vbCrLf & "''' Component: " & vbComp.name & " (" & ComponentTypeName(vbComp.Type) & ")"
-        Print #f, "''' ====================================================================="
+        Set vbProj = ThisWorkbook.VBProject
+    
+        Print #f, "=== VBA EXPORT: " & ThisWorkbook.name & " ==="
+        Print #f, "Timestamp: " & Now
+        Print #f, String(80, "=")
+    
+        For Each vbComp In vbProj.VBComponents
+            Set codeMod = vbComp.CodeModule
+            lastLine = codeMod.CountOfLines
+            
+            ' Note: Ensure ComponentTypeName function exists in your module
+            Print #f, vbCrLf & "''' Component: " & vbComp.name
+    
+            If lastLine > 0 Then
+                Print #f, codeMod.lines(1, lastLine)
+            Else
+                Print #f, "''' [No code]"
+            End If
+        Next vbComp
+    
+        Close #f
+        
+        ' Save the binary copy
+        ThisWorkbook.SaveCopyAs fullPathXlsm
+    Next outputDir
 
-        Set codeMod = vbComp.CodeModule
-        lastLine = codeMod.CountOfLines
-
-        If lastLine > 0 Then
-            Print #f, codeMod.lines(1, lastLine)
-        Else
-            Print #f, "''' [No code]"
-        End If
-    Next vbComp
-
-    Close #f
-    MsgBox "Export complete: " & outputPath, vbInformation
+    MsgBox "Export complete for: " & finalFileName, vbInformation
 End Sub
 
 Private Function ComponentTypeName(typeId As VBIDE.vbext_ComponentType) As String
@@ -1514,8 +1527,7 @@ Public Function CleanFileName(ByVal fileName As String) As String
     CleanFileName = Replace(fileName, " ", "_")
 End Function
 
-''' Component: modGlobal (Module)
-''' =====================================================================
+''' Component: modGlobal
 ' In a Standard Module
 Private pCPU As clsCPU  ' This holds the actual object reference
 
