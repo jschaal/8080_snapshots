@@ -1,0 +1,1569 @@
+=== VBA EXPORT: 8080 Model Current.xlsm ===
+Timestamp: 2/12/2026 11:19:00 AM
+================================================================================
+
+''' Component: ThisWorkbook
+''' [No code]
+
+''' Component: Sheet1
+''' [No code]
+
+''' Component: Sheet2
+''' [No code]
+
+''' Component: Assemble
+Option Explicit
+'--- Assemble.bas ---
+' Tracks whether the console is opened already
+Private mConsoleOpen As Boolean
+
+Public Sub Execute()
+    Dim pc As Long
+    Dim opcode As String
+    Dim op1 As String, op2 As String
+    Dim ofs_opcode As Integer, ofs_op1 As Integer, ofs_op2 As Integer, ofs_rowstat As Integer
+    Dim Reset As Integer, errcode As Integer
+    Dim rowStat As String
+    Dim memStart As Long, memSize As Long, memEnd As Long
+    Dim myCpu As clsCPU
+    Dim headless As Boolean
+
+    ' ========= Initialization =========
+    pc = Range("Start_PC").value
+    Range("PC").value = pc
+
+    ofs_opcode = Range("ofs_opcode").value
+    ofs_op1 = Range("ofs_op1").value
+    ofs_op2 = Range("ofs_op2").value
+    ofs_rowstat = Range("ofs_rowstat").value
+
+    Reset = Range("Reset").value
+    errcode = 0
+    Range("Error").value = 0
+    Range("errMessage").value = ""
+
+    memStart = HexToDec(Range("MemStart").value)
+    memSize = HexToDec(Range("MemSize").value)
+    memEnd = memStart + memSize
+
+    Set myCpu = gCPU
+
+    If Reset = 0 Then
+        ' Continue run: rehydrate CPU state from sheet
+        myCpu.Reg("PC") = pc
+        myCpu.LDARegs
+        pc = myCpu.SetPC(HexToDec(Range("PC").value))
+        myCpu.Reg("SP") = Range("SP").value
+    Else
+        ' Fresh run
+        ResetCPU
+        Set myCpu = gCPU
+        mConsoleOpen = False
+
+        ResetRegisters
+        pc = 0
+        myCpu.SetPC (Range("Line0").value)
+
+        myCpu.Reg("SP") = hex(memEnd)
+        Range("StackStart").value = myCpu.Reg("SP")
+
+        Range("Mem").ClearContents
+        Range("StackDetails").ClearContents
+        Range("consoleOut").value = ""
+
+        myCpu.ShowFlags
+    End If
+
+    ' ========= Headless toggle =========
+    headless = (Range("Step").value = 0)
+    If headless Then
+        myCpu.BeginDeferUI
+        Application.ScreenUpdating = False
+        Application.EnableEvents = False
+        ' Application.Calculation = xlCalculationManual  ' (intentionally untouched for Step 1)
+    End If
+
+    ' ========= Selection-free main loop with bulk reads =========
+    Dim base As Range, line0Dec As Long
+    Set base = Range("Line0")
+    line0Dec = CLng(base.value) ' Dec Line at Line0 (baseline)
+
+    ' How many rows to preload (MemStart..MemEnd)
+    Dim countRows As Long
+    countRows = (memEnd - memStart) + 1
+    If countRows < 1 Then countRows = 1
+
+    ' Load ONLY the columns we need into arrays
+    Dim arrOpcode As Variant, arrRowStat As Variant
+    Dim arrOp1 As Variant, arrOp2 As Variant
+    arrOpcode = base.Offset(0, ofs_opcode).Resize(countRows, 1).value
+    arrRowStat = base.Offset(0, ofs_rowstat).Resize(countRows, 1).value
+    arrOp1 = base.Offset(0, ofs_op1).Resize(countRows, 1).value
+    arrOp2 = base.Offset(0, ofs_op2).Resize(countRows, 1).value
+
+    Dim ubRows_Opcode As Long, ubRows_RowStat As Long
+    ubRows_Opcode = UBound(arrOpcode, 1)
+    ubRows_RowStat = UBound(arrRowStat, 1)
+
+    ' ---- Optional: normalize arrays ONCE (uppercase & trim) for hot loop speed ----
+    Const NormalizeInputs As Boolean = True
+    If NormalizeInputs Then
+        Dim idxN As Long
+        For idxN = 1 To countRows
+            If Not IsEmpty(arrOpcode(idxN, 1)) Then arrOpcode(idxN, 1) = Trim$(UCase$(CStr(arrOpcode(idxN, 1))))
+            If Not IsEmpty(arrRowStat(idxN, 1)) Then arrRowStat(idxN, 1) = Trim$(UCase$(CStr(arrRowStat(idxN, 1))))
+            If Not IsEmpty(arrOp1(idxN, 1)) Then arrOp1(idxN, 1) = Trim$(UCase$(CStr(arrOp1(idxN, 1))))
+            If Not IsEmpty(arrOp2(idxN, 1)) Then arrOp2(idxN, 1) = Trim$(UCase$(CStr(arrOp2(idxN, 1))))
+        Next idxN
+    End If
+
+    ' Compute starting row index from PC (hex text in clsCPU)
+    Dim pcDec As Long, rowIdx As Long
+    pcDec = CLng(HexToDec(CStr(myCpu.Reg("PC"))))
+    rowIdx = pcDec - line0Dec
+
+    ' --- optional geometry log ---
+    ConsolePrint "== Exec Geometry ==", True
+    ConsolePrint "ofs_opcode=" & ofs_opcode & _
+                 " ofs_op1=" & ofs_op1 & _
+                 " ofs_op2=" & ofs_op2 & _
+                 " ofs_rowstat=" & ofs_rowstat, True
+    ConsolePrint "line0Dec=" & line0Dec & " pcDec=" & pcDec & " rowIdx=" & rowIdx, True
+    ' -------------------------------------
+
+    ' Bounds before first read
+    If rowIdx < 0 Or rowIdx >= ubRows_Opcode Then
+        errcode = -200
+        GoTo ExecFinalize
+    End If
+
+    ' First opcode from array (already normalized if NormalizeInputs=True)
+    opcode = CStr(arrOpcode(rowIdx + 1, 1))
+
+    ' Prepare Range row for EQU label resolution
+    Dim curRow As Range
+    Set curRow = base.Offset(rowIdx, 0)
+
+    ' ---- Throttle state (baseline 250ms) ----
+    Dim instrCount As Long: instrCount = 0
+    Dim nextPaint As Double: nextPaint = Timer + 0.25
+    If headless Then DoEvents
+
+    Do While errcode = 0 And pcDec <= memEnd
+        ' Read OP1/OP2 from arrays (bulk preloaded)
+        op1 = CStr(arrOp1(rowIdx + 1, 1))
+        op2 = CStr(arrOp2(rowIdx + 1, 1))
+
+        ' RowStat from array if in bounds; else fall back to sheet
+        If rowIdx >= 0 And rowIdx < ubRows_RowStat Then
+            rowStat = CStr(arrRowStat(rowIdx + 1, 1))
+        Else
+            rowStat = Trim$(UCase$(CStr(curRow.Offset(0, ofs_rowstat).value)))
+        End If
+
+        If rowStat <> "C" And opcode <> "" Then
+            errcode = RunOpcode(myCpu, opcode, op1, op2, curRow)
+            If errcode <> 0 Then
+                If errcode = -9999 Then
+                    Range("Error").value = errcode
+                    Range("errMessage").value = "Error: Invalid OpCode: " & opcode & " at Line " & pcDec
+                End If
+            End If
+        End If
+
+        ' Throttled repaint during headless runs (console)
+        instrCount = instrCount + 1
+        If headless Then
+            If Timer >= nextPaint Then
+                DoEvents
+                ' Application.StatusBar = "PC=" & Hex$(pcDec) & " Instr=" & instrCount
+                nextPaint = Timer + 0.25
+            End If
+        End If
+
+        ' Advance PC and compute next row
+        pcDec = myCpu.IncPC()
+        rowIdx = pcDec - line0Dec
+        If rowIdx < 0 Or rowIdx >= ubRows_Opcode Then Exit Do
+
+        ' Next opcode from array (already normalized)
+        opcode = CStr(arrOpcode(rowIdx + 1, 1))
+
+        ' Keep Range row current for EQU
+        Set curRow = base.Offset(rowIdx, 0)
+        ' (RowStat fetched at top of next iteration)
+    Loop
+
+ExecFinalize:
+    ' ========= Finalization =========
+    If headless Then
+        myCpu.EndDeferUI
+        Application.EnableEvents = True
+        Application.ScreenUpdating = True
+        Application.StatusBar = False
+    End If
+
+    If Range("Error").value = 0 Or Range("Error").value = -200 Then
+        Range("errMessage") = "Execution Complete"
+    End If
+End Sub
+
+Public Sub ResetRegisters()
+    Dim i As Integer
+    For i = 0 To 8
+        Range("Registers").Offset(i, 2).value = 0
+    Next i
+End Sub
+
+' NOTE: signature accepts curRow so EQU no longer depends on ActiveCell
+Public Function RunOpcode(ByRef myCpu As clsCPU, ByVal opcode As String, _
+                          ByVal op1 As String, ByVal op2 As String, _
+                          Optional ByVal curRow As Range = Nothing) As Integer
+    Dim res As Integer
+    res = 0
+
+    ' OpCode already normalized in Execute if NormalizeInputs=True,
+    ' but we keep this for safety/compat.
+    opcode = Trim$(UCase$(opcode))
+
+    Select Case opcode
+        Case "CALL": res = myCpu.CALL_(op1, op2)
+        Case "DB":   res = 0
+        Case "EQU"
+            If curRow Is Nothing Then
+                res = myCpu.EQU(op1, "")
+            Else
+                res = myCpu.EQU(op1, CStr(curRow.Offset(0, Range("ofs_label").value).value))
+            End If
+        Case "END":  res = -200
+        Case "DCR":  res = myCpu.DCR(op1)
+        Case "HLT":  res = myCpu.HLT()
+        Case "INR":  res = myCpu.INR(op1)
+        Case "JC":   res = myCpu.JC(op1)
+        Case "JM":   res = myCpu.JM(op1)
+        Case "JMP":  res = myCpu.JMP(op1)
+        Case "JNC":  res = myCpu.JNC(op1)
+        Case "JNZ":  res = myCpu.JNZ(op1)
+        Case "JP":   res = myCpu.JP(op1)
+        Case "JPE":  res = myCpu.JPE(op1)
+        Case "JPO":  res = myCpu.JPO(op1)
+        Case "JZ":   res = myCpu.JZ(op1)
+        Case "LXI":  res = myCpu.LXI(op1, op2)
+        Case "MOV":  res = myCpu.MOV(op1, op2)
+        Case "MVI":  res = myCpu.MVI(op1, op2)
+        Case "ORA":  res = myCpu.ORA(op1)
+        Case "POP":  res = myCpu.POP(op1)
+        Case "PUSH": res = myCpu.PUSH(op1)
+        Case "RET":  res = myCpu.RET()
+        Case Else:   res = -9999
+    End Select
+
+    RunOpcode = res
+End Function
+
+Public Function HEX2ASCII(ByVal hexRange As Variant) As String
+    Dim hexVal As String
+    Dim decVal As Integer
+
+    If IsEmpty(hexRange) Or hexRange = "" Then
+        HEX2ASCII = ""
+        Exit Function
+    End If
+
+    hexVal = CStr(hexRange)
+    On Error Resume Next
+    decVal = Application.WorksheetFunction.Hex2Dec(hexVal)
+    If Err.Number <> 0 Then
+        HEX2ASCII = "?"
+        Exit Function
+    End If
+    On Error GoTo 0
+
+    If decVal >= 32 And decVal <= 126 Then
+        HEX2ASCII = Chr(decVal)
+    Else
+        HEX2ASCII = "."
+    End If
+End Function
+
+Public Function HexToDec(ByVal op1 As String) As Long
+    HexToDec = Val("&H" & op1)
+End Function
+
+Public Sub ConsolePrint(ByVal text As String, Optional ByVal crlf As Boolean = True, Optional ByVal prtSpace As Boolean = False)
+    If Not mConsoleOpen Then ShowConsole
+    If crlf Then
+        usrForm.PrtLn text, prtSpace
+    Else
+        usrForm.Prt text, prtSpace
+    End If
+End Sub
+
+Public Sub ClearConsole()
+    usrForm.ClearConsole
+End Sub
+
+Sub ShowConsole()
+    usrForm.Show vbModeless
+    mConsoleOpen = True
+End Sub
+
+Sub Demo()
+    ShowConsole
+    With usrForm
+        .ClearConsole
+        .PrtLn "Console started..."
+        Dim i As Long
+        For i = 1 To 50
+            .PrtLn "Step " & i
+        Next
+        .PrtLn "Done."
+    End With
+End Sub
+
+
+''' Component: clsCPU
+' clsCPU.cls — DROP-IN (Parity LUT + Hex$, SP via SetReg, UI deferral preserved)
+Option Explicit
+
+' --- Inside clsCPU Class Module ---
+Private pRegs As Object ' Dictionary for registers
+Private pFlags As Object
+Private pStack As New clsStack
+Private pLabels As New clsLabels
+Private pPC_dec As Long
+
+' --- UI deferral (headless run) ---
+Private mDeferUI As Boolean
+Private mUIRegsDirty As Boolean
+Private mUIFlagsDirty As Boolean
+
+Public Sub BeginDeferUI()
+    mDeferUI = True
+    mUIRegsDirty = False
+    mUIFlagsDirty = False
+End Sub
+
+Public Sub EndDeferUI()
+    mDeferUI = False
+    FlushUI
+    pStack.ShowStack True
+End Sub
+
+Public Sub FlushUI()
+    Dim k As Variant, nm As String
+    For Each k In pRegs.Keys
+        If Len(k) = 1 Then nm = "R_" & k Else nm = k
+        Range(nm).value = pRegs(k)
+    Next
+    For Each k In pFlags.Keys
+        Range(CStr(k)).value = pFlags(k)
+    Next
+    mUIRegsDirty = False
+    mUIFlagsDirty = False
+End Sub
+
+Private Sub Class_Initialize()
+    Set pRegs = CreateObject("Scripting.Dictionary")
+    pRegs.ADD "A", 0
+    pRegs.ADD "B", 0
+    pRegs.ADD "C", 0
+    pRegs.ADD "D", 0
+    pRegs.ADD "E", 0
+    pRegs.ADD "H", 0
+    pRegs.ADD "L", 0
+    pRegs.ADD "PC", 0
+    pRegs.ADD "SP", &HFF
+
+    Set pFlags = CreateObject("Scripting.Dictionary")
+    pFlags("Carry") = 0
+    pFlags("Parity") = 0
+    pFlags("AC") = 0
+    pFlags("Zero") = 0
+    pFlags("Sign") = 0
+    pFlags("Flag") = 1
+End Sub
+
+' 8080 OpCode Functions (subset implemented)
+Public Function ACI(ByVal op1 As String) As Integer: ACI = 0: End Function
+Public Function ADC(ByVal op1 As String) As Integer: ADC = 0: End Function
+Public Function ADD(ByVal op1 As String) As Integer: ADD = 0: End Function
+
+' ----- CALL -----
+Public Function CALL_(ByVal op1 As String, Optional ByVal op2 As String = "") As Integer
+    Dim record As clsLabelRecord, currentPC As Long, retAddr As Long
+    Dim strAddr As String, sp_dec As Long, proc As Boolean
+    Dim line0Address As Long
+    Dim errorBase As Integer: errorBase = 160
+
+    If op1 = "" Then
+        SetError errorBase, "CALL: Missing Operand: " & op1
+        CALL_ = errorBase: Exit Function
+    End If
+
+    proc = pLabels.IsProc(op1)
+    If proc Then
+        CALL_ = CallByName(Me, op1, VbMethod, op2)
+        Exit Function
+    End If
+
+    Set record = pLabels.GetLabel(op1)
+    If record Is Nothing Then
+        SetError errorBase + 1, "CALL: Missing Label: " & op1
+        CALL_ = errorBase + 1: Exit Function
+    End If
+
+    currentPC = pPC_dec
+    sp_dec = HexToDec(pRegs("SP"))
+    retAddr = currentPC + 1
+    strAddr = Right$("0000" & hex$(retAddr), 4)
+
+    sp_dec = sp_dec - 1
+    pStack.clsPUSH sp_dec, Left$(strAddr, 2), "CALL " & op1
+    sp_dec = sp_dec - 1
+    pStack.clsPUSH sp_dec, Right$(strAddr, 2), "CALL " & op1
+
+    Me.SetReg "SP", hex$(sp_dec)
+    pStack.ShowStack
+
+    pPC_dec = record.clsAddress - 1
+    Me.SetPC pPC_dec
+
+    If Sheets("CPU").Range("Step").value = 1 Then
+        line0Address = Range("line0").value
+        Range("line0").Offset(record.clsAddress - line0Address - 1).Select
+    End If
+
+    CALL_ = 0
+End Function
+
+' ----- CLS (console clear) -----
+Public Function CLS(Optional ByVal op1 = "", Optional ByVal op2 = "") As Integer
+    usrForm.ClearConsole
+    CLS = 0
+End Function
+
+' ----- DCR -----
+Public Function DCR(ByVal op1 As String) As Integer
+    Dim errorBase As Integer: errorBase = 230
+    Dim result As Integer, current As Integer, ac As Integer
+
+    If op1 = "" Then SetError errorBase, "DCR: Missing Operands: " & op1: DCR = errorBase: Exit Function
+    If Not pRegs.Exists(op1) Then SetError errorBase + 1, "DCR: Invalid Register: " & op1: DCR = errorBase + 1: Exit Function
+
+    current = HexToDec(pRegs(op1))
+    result = (current - 1) And 255
+
+    ac = IIf((current And &HF) = 0, 1, 0)
+    pFlags("AC") = ac
+    If Not mDeferUI Then Range("AC").value = ac Else mUIFlagsDirty = True
+
+    SetZero result
+    SetSign result
+    SetParity result
+    SetReg op1, hex$(result)
+
+    DCR = 0
+End Function
+
+' ----- EQU -----
+Public Function EQU(ByVal op1 As String, label As String) As Integer
+    Dim errorBase As Integer: errorBase = 300
+    Dim res As Integer
+    Dim record As clsLabelRecord
+
+    If op1 = "" Then SetError errorBase, "EQU: Missing Operand: " & op1: EQU = errorBase: Exit Function
+    If label = "" Then SetError errorBase + 1, "EQU: Missing Label: " & label: EQU = errorBase + 1: Exit Function
+
+    Set record = pLabels.GetLabel(label)
+    If Not record Is Nothing Then SetError errorBase + 2, "EQU: Duplicate label: " & label: EQU = errorBase + 2: Exit Function
+    If Not IsValidHex(op1) Then SetError errorBase + 3, "EQU: Invalid Valid: " & op1: EQU = errorBase + 3: Exit Function
+
+    res = pLabels.AddLabel(label, "E", op1)
+    If res <> 0 Then SetError errorBase + 4, "EQU: Error adding label: " & label: EQU = errorBase + 4: Exit Function
+    EQU = 0
+End Function
+
+' ----- HLT -----
+Public Function HLT() As Integer
+    Dim errorBase As Integer: errorBase = -100
+    SetError errorBase, "Program Halted:"
+    HLT = errorBase
+End Function
+
+' ----- INR -----
+Public Function INR(ByVal op1 As String) As Integer
+    Dim errorBase As Integer: errorBase = 280
+    Dim result As Integer, current As Integer, nibble As Integer, ac As Integer
+
+    If op1 = "" Then SetError errorBase, "INR: Missing Operands: " & op1: INR = errorBase: Exit Function
+    If Not pRegs.Exists(op1) Then SetError errorBase + 1, "INR: Invalid Register: " & op1: INR = errorBase + 1: Exit Function
+
+    current = HexToDec(pRegs(op1))
+    result = (current + 1) And 255
+
+    nibble = current And 15
+    ac = IIf(nibble = 15, 1, 0)
+    pFlags("AC") = ac
+    If Not mDeferUI Then Range("AC").value = ac Else mUIFlagsDirty = True
+
+    SetZero result
+    SetSign result
+    SetParity result
+    SetReg op1, hex$(result)
+    ShowFlags
+
+    INR = 0
+End Function
+
+' ----- JMP -----
+Public Function JMP(op1 As String) As Integer
+    Dim errorBase As Integer: errorBase = 300
+    Dim memEnd As Long, op_dec As Long
+    Dim record As clsLabelRecord
+    Dim line0Address As Long
+
+    If op1 = "" Then SetError errorBase, "JMP: Missing Operand: " & op1: JMP = errorBase: Exit Function
+
+    Set record = pLabels.GetLabel(op1)
+    If record Is Nothing Then SetError errorBase + 1, "JMP: Missing Label: " & op1: JMP = errorBase + 1: Exit Function
+
+    op1 = record.clsAddressHex
+    If Not IsValidHex(op1) Then SetError errorBase + 2, "JMP: Invalid Operand: " & op1: JMP = errorBase + 2: Exit Function
+
+    memEnd = Range("MemEnd").Offset(0, 1).value
+    op_dec = HexToDec(op1)
+    If op_dec < 0 Or op_dec > memEnd Then SetError errorBase + 3, "JMP: Invalid Address: " & op1: JMP = errorBase + 3: Exit Function
+
+    Me.SetPC (op_dec - 1)
+
+    If Sheets("CPU").Range("Step").value = 1 Then
+        line0Address = Range("line0").value
+        Range("line0").Offset(record.clsAddress - line0Address - 1).Select
+    End If
+
+    JMP = 0
+End Function
+
+' --- Conditional jumps ---
+Public Function JZ(ByVal op1 As String) As Integer: If EvaluateCondition("JZ") Then JZ = JMP(op1) Else JZ = 0
+End Function
+Public Function JNZ(ByVal op1 As String) As Integer: If EvaluateCondition("JNZ") Then JNZ = JMP(op1) Else JNZ = 0
+End Function
+Public Function JC(ByVal op1 As String) As Integer: If EvaluateCondition("JC") Then JC = JMP(op1) Else JC = 0
+End Function
+Public Function JNC(ByVal op1 As String) As Integer: If EvaluateCondition("JNC") Then JNC = JMP(op1) Else JNC = 0
+End Function
+Public Function JM(ByVal op1 As String) As Integer: If EvaluateCondition("JM") Then JM = JMP(op1) Else JM = 0
+End Function
+Public Function JP(ByVal op1 As String) As Integer: If EvaluateCondition("JP") Then JP = JMP(op1) Else JP = 0
+End Function
+Public Function JPE(ByVal op1 As String) As Integer: If EvaluateCondition("JPE") Then JPE = JMP(op1) Else JPE = 0
+End Function
+Public Function JPO(ByVal op1 As String) As Integer: If EvaluateCondition("JPO") Then JPO = JMP(op1) Else JPO = 0
+End Function
+
+' ----- LXI -----
+Public Function LXI(ByVal op1 As String, op2 As String) As Integer
+    Dim errorBase As Integer: errorBase = 340
+    Dim record As clsLabelRecord
+    Dim useLabel As Boolean
+    Dim address As String
+    Dim regLow As String, regHigh As String
+    Dim ofs_mem As Long, sp As Long, memStart As Long
+
+    If op1 = "" Or op2 = "" Then SetError errorBase, "LXI: Missing Operands: " & op1 & " " & op2: LXI = errorBase: Exit Function
+    If op1 <> "B" And op1 <> "D" And op1 <> "H" And op1 <> "SP" Then SetError errorBase + 1, "LXI: Invalid Register: " & op1: LXI = errorBase + 1: Exit Function
+
+    Set record = pLabels.GetLabel(op2)
+    useLabel = Not record Is Nothing
+    If useLabel Then op2 = record.clsAddressHex
+    If Not IsValidHex(op2) Then SetError errorBase + 2, "LXI: Invalid Address: " & op2: LXI = errorBase + 2: Exit Function
+
+    address = Right$("0000" & op2, 4)
+    regHigh = Left$(address, 2)
+    regLow = Right$(address, 2)
+
+    Select Case op1
+        Case "B": SetReg "B", regHigh: SetReg "C", regLow
+        Case "D": SetReg "D", regHigh: SetReg "E", regLow
+        Case "H": SetReg "H", regHigh: SetReg "L", regLow
+        Case "SP"
+            Me.SetReg "SP", Right$("0000" & op2, 4)
+            Range("StackStart") = pRegs("SP")
+            sp = HexToDec(op2)
+            ofs_mem = Range("ofs_mem").value
+            memStart = HexToDec(Range("MemStart").value)
+            If Sheets("CPU").Range("Step").value = 1 Then
+                Range("line0").Offset(sp - memStart, ofs_mem).value = "FF"
+            End If
+            pStack.ShowStack
+    End Select
+
+    LXI = 0
+End Function
+
+' ----- MOV -----
+Public Function MOV(ByVal op1 As String, ByVal op2 As String) As Integer
+    Dim errorBase As Integer: errorBase = 350
+    If op1 = "" Or op2 = "" Then SetError errorBase, "MOV: Missing Operands: " & op1 & " " & op2: MOV = errorBase: Exit Function
+    If pRegs.Exists(op1) And pRegs.Exists(op2) Then
+        SetReg op1, pRegs(op2)
+    Else
+        SetError errorBase + 1, "MOV: Invalid Registers: " & op1 & " " & op2: MOV = errorBase + 1: Exit Function
+    End If
+    MOV = 0
+End Function
+
+' ----- MVI -----
+Public Function MVI(ByVal op1 As String, ByVal op2 As String) As Integer
+    Dim errorBase As Integer: errorBase = 360
+    Dim labelRecord As clsLabelRecord
+
+    If op1 = "" Or op2 = "" Then SetError errorBase, "MVI: Missing Operands: " & op1 & " " & op2: MVI = errorBase: Exit Function
+    Set labelRecord = pLabels.GetLabel(op2)
+    If Not labelRecord Is Nothing Then op2 = labelRecord.clsAddressHex
+    If Not IsValidHex(op2) Then SetError errorBase + 1, "MVI: Invalid Hex Value: " & op2: MVI = errorBase + 1: Exit Function
+    If pRegs.Exists(op1) Then
+        SetReg op1, op2
+    Else
+        SetError errorBase + 2, "MVI: Invalid Register: " & op1: MVI = errorBase + 2: Exit Function
+    End If
+    MVI = 0
+End Function
+
+' ----- ORA -----
+Public Function ORA(ByVal op1 As String) As Integer
+    Dim errorBase As Integer: errorBase = 380
+    Dim result As Integer
+    Dim dec_op1 As Integer, dec_a As Integer
+
+    If op1 = "" Then SetError errorBase, "ORA: Missing Operand: " & op1: ORA = errorBase: Exit Function
+    dec_op1 = HexToDec(pRegs(op1))
+    dec_a = HexToDec(pRegs("A"))
+    result = (dec_a Or dec_op1) And 255
+    SetReg "A", hex$(result)
+    pFlags("Carry") = 0
+    pFlags("AC") = 0
+    SetSign result
+    SetZero result
+    SetParity result
+    ShowFlags
+End Function
+
+' ----- POP -----
+Friend Function POP(ByVal op1) As Integer
+    Dim res As Integer, intSP As Integer
+    Dim registerRecH As clsRegisterState, registerRecL As clsRegisterState
+    Dim errorBase As Integer: errorBase = 420
+    Dim flagByte As Byte
+
+    res = 0
+    If op1 = "" Then SetError errorBase, "POP: Missing Operand: " & op1: POP = errorBase: Exit Function
+
+    intSP = HexToDec(pRegs("SP"))
+    Set registerRecL = pStack.clsPOP: intSP = intSP + 1
+    Set registerRecH = pStack.clsPOP: intSP = intSP + 1
+
+    Select Case op1
+        Case "B": SetReg "B", registerRecH.value: SetReg "C", registerRecL.value
+        Case "D": SetReg "D", registerRecH.value: SetReg "E", registerRecL.value
+        Case "H": SetReg "H", registerRecH.value: SetReg "L", registerRecL.value
+        Case "PSW"
+            SetReg "A", registerRecH.value
+            flagByte = HexToDec(registerRecL.value)
+            pFlags("Sign") = IIf((flagByte And 128) <> 0, 1, 0)
+            pFlags("Zero") = IIf((flagByte And 64) <> 0, 1, 0)
+            pFlags("AC") = IIf((flagByte And 16) <> 0, 1, 0)
+            pFlags("Parity") = IIf((flagByte And 4) <> 0, 1, 0)
+            pFlags("Flag") = 1
+            pFlags("Carry") = IIf((flagByte And 1) <> 0, 1, 0)
+            ShowFlags
+        Case Else
+            SetError errorBase + 1, "POP: Invalid Register: " & op1: POP = errorBase + 1: Exit Function
+    End Select
+
+    Me.SetReg "SP", hex$(intSP)
+    pStack.ShowStack
+    POP = res
+End Function
+
+' ----- PUSH -----
+Public Function PUSH(ByVal op1) As Integer
+    Dim intSP As Integer
+    Dim errorBase As Integer: errorBase = 430
+    Dim flagByte As Byte
+
+    If op1 = "" Then SetError errorBase, "PUSH: Missing Operand: " & op1: PUSH = errorBase: Exit Function
+
+    intSP = HexToDec(pRegs("SP"))
+    intSP = intSP - 1
+    Select Case op1
+        Case "B": pStack.clsPUSH intSP, pRegs("B"), "B": intSP = intSP - 1: pStack.clsPUSH intSP, pRegs("C"), "C"
+        Case "D": pStack.clsPUSH intSP, pRegs("D"), "D": intSP = intSP - 1: pStack.clsPUSH intSP, pRegs("E"), "E"
+        Case "H": pStack.clsPUSH intSP, pRegs("H"), "H": intSP = intSP - 1: pStack.clsPUSH intSP, pRegs("L"), "L"
+        Case "PSW"
+            pStack.clsPUSH intSP, pRegs("A"), "A"
+            intSP = intSP - 1
+            flagByte = 0
+            If pFlags("Sign") = 1 Then flagByte = flagByte + 128
+            If pFlags("Zero") = 1 Then flagByte = flagByte + 64
+            If pFlags("AC") = 1 Then flagByte = flagByte + 16
+            If pFlags("Parity") = 1 Then flagByte = flagByte + 4
+            flagByte = flagByte + 2
+            If pFlags("Carry") = 1 Then flagByte = flagByte + 1
+            pStack.clsPUSH intSP, hex$(flagByte), "Flags"
+        Case Else
+            SetError errorBase + 1, "PUSH: Invalid Register: " & op1: PUSH = errorBase + 1: Exit Function
+    End Select
+
+    Me.SetReg "SP", hex$(intSP)
+    pStack.ShowStack
+    PUSH = 0
+End Function
+
+' ----- RET -----
+Public Function RET() As Integer
+    Dim stackRec As clsRegisterState
+    Dim Count As Long, newPC As Long, sp_dec As Long
+    Dim retAddress As String
+    Dim line0Address As Long
+    Dim errorBase As Integer: errorBase = 460
+
+    Count = pStack.Count
+    If Count = 0 Then SetError errorBase, "RET: No Address on Stack": RET = errorBase: Exit Function
+
+    Set stackRec = pStack.clsPeek
+    If Left$(stackRec.RegisterName, 4) <> "CALL" Then SetError errorBase + 1, "RET: Invalid Address on Stack: " & stackRec.RegisterName: RET = errorBase + 1: Exit Function
+
+    sp_dec = HexToDec(pRegs("SP"))
+    Set stackRec = pStack.clsPOP: sp_dec = sp_dec + 1: retAddress = stackRec.value
+    Set stackRec = pStack.clsPOP: sp_dec = sp_dec + 1: retAddress = stackRec.value & retAddress
+
+    Me.SetReg "SP", hex$(sp_dec)
+    pStack.ShowStack
+
+    newPC = HexToDec(retAddress) - 1
+    Me.SetPC newPC
+
+    If Sheets("CPU").Range("Step").value = 1 Then
+        line0Address = Range("line0").value
+        Range("line0").Offset(pPC_dec - line0Address).Select
+    End If
+
+    RET = 0
+End Function
+
+' ----- Register/Flag utilities -----
+Public Property Get Reg(ByVal name As String) As Variant
+    If pRegs.Exists(name) Then Reg = pRegs(name) Else Reg = 0
+End Property
+
+Public Property Let Reg(ByVal name As String, ByVal value As Variant)
+    If pRegs.Exists(name) Then pRegs(name) = value
+End Property
+
+Public Sub LDARegs()
+    Dim key As Variant, strReg As String
+    For Each key In pRegs.Keys
+        If key = "PC" Or key = "SP" Then
+            strReg = key
+        Else
+            strReg = "R_" & key
+        End If
+        pRegs(key) = Range(strReg).value
+    Next key
+End Sub
+
+Public Sub STARegs()
+    Dim key As Variant, strReg As String
+    For Each key In pRegs.Keys
+        If key <> "PC" And key <> "SP" Then
+            strReg = "R_" & key
+            Range(strReg).value = 0
+        End If
+    Next key
+End Sub
+
+Private Sub SetError(ByVal errcode As Integer, ByVal errString As String)
+    Dim errMessage As String
+    If errString Like "*Halt*" Then errMessage = errString Else errMessage = "Error: " & errcode & " - " & errString
+    errMessage = errMessage & " at line " & Reg("PC")
+    Range("Error").value = errcode
+    Range("errMessage") = errMessage
+End Sub
+
+Private Function EvaluateCondition(ByVal opcode As String) As Boolean
+    Select Case opcode
+        Case "JZ":  EvaluateCondition = (pFlags("Zero") = 1)
+        Case "JNZ": EvaluateCondition = (pFlags("Zero") = 0)
+        Case "JC":  EvaluateCondition = (pFlags("Carry") = 1)
+        Case "JNC": EvaluateCondition = (pFlags("Carry") = 0)
+        Case "JM":  EvaluateCondition = (pFlags("Sign") = 1)
+        Case "JP":  EvaluateCondition = (pFlags("Sign") = 0)
+        Case "JPE": EvaluateCondition = (pFlags("Parity") = 1)
+        Case "JPO": EvaluateCondition = (pFlags("Parity") = 0)
+    End Select
+End Function
+
+Public Function IsValidHex(ByVal hexValue As String) As Boolean
+    Dim length As Integer
+    length = Len(hexValue)
+    If length = 1 Or length = 3 Then hexValue = "0" & hexValue: length = length + 1
+    If length <> 2 And length <> 4 Then IsValidHex = False: Exit Function
+    If hexValue Like "*[!0-9a-fA-F]*" Then IsValidHex = False Else IsValidHex = True
+End Function
+
+Public Function IncPC() As Long
+    pPC_dec = pPC_dec + 1
+    pRegs("PC") = hex$(pPC_dec)
+    If Not mDeferUI Then Range("PC").value = pRegs("PC")
+    IncPC = pPC_dec
+End Function
+
+Public Function SetPC(ByVal address As Long)
+    pPC_dec = address
+    pRegs("PC") = hex$(pPC_dec)
+    If Not mDeferUI Then Range("PC").value = pRegs("PC")
+    SetPC = pPC_dec
+End Function
+
+' ----- Parity LUT (fast) -----
+Private Function SetParity(ByVal bits As Byte) As Integer
+    Static parity(0 To 255) As Byte
+    Static init As Boolean
+    Dim i As Long, b As Long, c As Long
+
+    If Not init Then
+        For i = 0 To 255
+            b = i: c = 0
+            Do While b
+                c = c Xor (b And 1)
+                b = b \ 2
+            Loop
+            ' 8080 parity flag: 1 for even parity
+            parity(i) = IIf(c = 0, 1, 0)
+        Next
+        init = True
+    End If
+
+    pFlags("Parity") = parity(bits)
+    If Not mDeferUI Then Range("Parity").value = pFlags("Parity") Else mUIFlagsDirty = True
+    SetParity = pFlags("Parity")
+End Function
+
+Private Function SetSign(bits As Integer) As Integer
+    Dim sign As Integer
+    sign = IIf((bits And 128) > 0, 1, 0)
+    pFlags("Sign") = sign
+    If Not mDeferUI Then Range("Sign").value = sign Else mUIFlagsDirty = True
+    SetSign = sign
+End Function
+
+Public Function ShowFlags() As Integer
+    If Not mDeferUI Then
+        Dim key As Variant
+        For Each key In pFlags.Keys
+            Range(CStr(key)).value = pFlags(key)
+        Next
+    Else
+        mUIFlagsDirty = True
+    End If
+    ShowFlags = 0
+End Function
+
+Public Function SetZero(result As Integer) As Integer
+    pFlags("Zero") = IIf(result = 0, 1, 0)
+    If Not mDeferUI Then Range("Zero").value = pFlags("Zero") Else mUIFlagsDirty = True
+    SetZero = pFlags("Zero")
+End Function
+
+Public Function SetReg(ByVal register As String, ByVal value As String)
+    Dim displayName As String
+    If Len(register) = 1 Then
+        displayName = "R_" & register
+    Else
+        displayName = register
+    End If
+
+    ' Always update CPU state
+    pRegs(register) = value
+
+    ' Only paint UI when not headless (Step=1)
+    If Not mDeferUI Then
+        Range(displayName).value = value
+    Else
+        mUIRegsDirty = True
+    End If
+
+    SetReg = value
+End Function
+
+'''
+' - standard procedures library
+'''
+
+' --- Console procedure shims (keep CALL X working) ---
+
+' Print record or literal; crlf/space handled by flags
+Public Function PRTN(Optional ByVal op2 As String, _
+                     Optional ByVal crlf As Boolean = False, _
+                     Optional ByVal prtSpace As Boolean = False) As Integer
+    Dim errorBase As Integer: errorBase = 425
+    Dim record As clsLabelRecord
+    Dim address As String
+
+    ' If caller passed a literal, print it directly
+    If Len(op2) > 0 Then
+        ConsolePrint op2, crlf, prtSpace
+        PRTN = 0
+        Exit Function
+    End If
+
+    ' Otherwise print the data pointed to by HL
+    address = pRegs("H") & pRegs("L")
+    Set record = pLabels.GetByXref(address)
+    If record Is Nothing Then
+        SetError errorBase, "PRTN: Missing Label for Address: " & address
+        PRTN = errorBase
+        Exit Function
+    End If
+
+    ConsolePrint record.clsData, crlf, prtSpace
+    PRTN = 0
+End Function
+
+Public Function PRTNS(Optional ByVal op2 As String) As Integer
+    ' newline + space
+    PRTNS = PRTN(op2, False, True)
+End Function
+
+Public Function PRTCRLF(Optional ByVal op2 As String) As Integer
+    ' newline, no space
+    PRTCRLF = PRTN(op2, True, False)
+End Function
+
+Public Function PRTCRLFS(Optional ByVal op2 As String) As Integer
+    ' newline + space
+    PRTCRLFS = PRTN(op2, True, True)
+End Function
+
+
+
+''' Component: clsStack
+'''
+' --- clsStack.cls ---
+'''
+Option Explicit
+
+Private m_Items() As clsRegisterState
+Private m_Count As Long
+
+Private Sub Class_Initialize()
+    m_Count = 0
+    ReDim m_Items(0)
+End Sub
+
+Public Sub ShowStack(Optional ByVal force As Boolean = False)
+    ' Skip redraw during headless runs unless forced
+    If Not force And Sheets("CPU").Range("Step").value = 0 Then Exit Sub
+
+    Dim i As Long, detail As Long
+    Range("StackDetails").ClearContents
+    If m_Count > 0 Then
+        For i = 1 To m_Count
+            detail = m_Count - i + 1
+            Range("stackView").Offset(i - 1, 1).value = m_Items(detail).MemoryAddress
+            Range("stackView").Offset(i - 1, 2).value = Right$("00" & m_Items(detail).value, 2) & "H"
+            Range("stackView").Offset(i - 1, 3).value = m_Items(detail).RegisterName
+        Next
+    End If
+End Sub
+
+Public Sub clsPUSH(ByVal Addr As String, ByVal Val As Variant, ByVal Reg As String)
+    Dim newItem As clsRegisterState
+    Set newItem = New clsRegisterState
+    newItem.MemoryAddress = Addr
+    newItem.value = Val
+    newItem.RegisterName = Reg
+    m_Count = m_Count + 1
+    If m_Count = 1 Then
+        ReDim m_Items(1 To 1)
+    Else
+        ReDim Preserve m_Items(1 To m_Count)
+    End If
+    Set m_Items(m_Count) = newItem
+End Sub
+
+Public Function clsPOP() As clsRegisterState
+    If m_Count > 0 Then
+        Set clsPOP = m_Items(m_Count)
+        m_Count = m_Count - 1
+        If m_Count > 0 Then
+            ReDim Preserve m_Items(1 To m_Count)
+        Else
+            ReDim m_Items(0)
+        End If
+    Else
+        Err.Raise vbObjectError + 513, "clsStack", "Stack Underflow: No items to pop."
+    End If
+End Function
+
+Public Function clsPeek() As clsRegisterState
+    If m_Count > 0 Then
+        Set clsPeek = m_Items(m_Count)
+    Else
+        Set clsPeek = Nothing
+    End If
+End Function
+
+Public Property Get Count() As Long
+    Count = m_Count
+End Property
+
+''' Component: clsRegisterState
+'''
+' -- clsRegisterState.cls
+' Inside clsRegisterState
+Public MemoryAddress As String
+Public value As Variant
+Public RegisterName As String
+'''
+
+
+
+''' Component: clsLabels
+'''
+' clsLabels
+'''
+Option Explicit
+Private pLabels As Object
+Private pLabelXrefs As Object
+Private pProcedures As Object
+
+
+Private Sub Class_Initialize()
+    Set pLabels = CreateObject("Scripting.Dictionary")
+    Set pLabelXrefs = CreateObject("Scripting.Dictionary")
+    Set pProcedures = CreateObject("Scripting.Dictionary")
+    ParseLabels
+    ParseProcedures
+End Sub
+
+' Label Types:
+' A = address
+' E = EQU
+Public Sub ParseLabels()
+    Dim data As Variant
+    Dim r As Long
+    Dim labelRec As clsLabelRecord
+    Dim rowEnd As Long
+    Dim ofs_label, ofs_rowstat, ofs_op1, ofs_labelType As Integer
+    Dim labelName As String
+    Dim labelData As String
+
+    pLabels.RemoveAll
+    rowEnd = Range("Finished").row
+    ofs_label = Range("ofs_label").value
+    ofs_rowstat = Range("ofs_rowstat").value
+    ofs_labelType = Range("ofs_labeltype").value
+    ofs_op1 = Range("ofs_op1").value
+
+    ' Load the entire range into memory for speed
+    data = Range("Line0").Offset(0, ofs_label).Resize(rowEnd, Range("ofs_mem").value).value
+
+    For r = 1 To UBound(data, 1)
+        labelName = UCase(Trim(CStr(data(r, 1))))
+        If labelName <> "" Then
+            If labelName = "F" Then
+                Exit For
+            End If
+            Set labelRec = New clsLabelRecord
+            labelRec.clsAddress = Range("Line0").Offset(r - 1, 0).value
+            labelRec.clsAddressHex = hex(labelRec.clsAddress)
+            labelRec.clsAddressHex = Right("0000" & labelRec.clsAddressHex, 4)
+            ' Grab the type from the sheet
+            labelRec.clsLabelType = Range("Line0").Offset(r - 1, ofs_labelType).value
+            If labelRec.clsLabelType = "D" Then
+                labelRec.clsData = Range("Line0").Offset(r - 1, ofs_op1).value
+                labelRec.clsSize = Len(labelRec.clsData)
+            Else
+                labelRec.clsSize = 16
+            End If
+            If labelRec.clsLabelType <> "E" And Not pLabels.Exists(labelName) Then
+                pLabels.ADD labelName, labelRec
+                pLabelXrefs.ADD labelRec.clsAddressHex, labelRec
+            End If
+        End If
+    Next r
+End Sub
+Public Function GetLabel(ByVal labelName As String) As clsLabelRecord
+    ' Check if the label exists to avoid "Key not found" errors
+    If pLabels.Exists(labelName) Then
+        ' Return the object (Must use Set for objects!)
+        Set GetLabel = pLabels(labelName)
+    Else
+        ' Return Nothing if it doesn't exist
+        Set GetLabel = Nothing
+    End If
+End Function
+Public Function AddLabel(ByVal labelName As String, ByVal LabelType As String, ByVal AddressHex As String)
+    Dim labelRec As clsLabelRecord
+    Dim res As Integer
+    res = 0
+    If labelName <> "" Then
+        Set labelRec = New clsLabelRecord
+        labelRec.clsAddress = HexToDec(AddressHex)
+        labelRec.clsAddressHex = AddressHex
+        If labelRec.clsAddress < 256 Then
+            labelRec.clsSize = 8
+        Else
+            labelRec.clsSize = 16
+        End If
+        If Not pLabels.Exists(labelName) Then
+                pLabels.ADD labelName, labelRec
+                pLabels.ADD AddressHex, labelRec
+        End If
+    Else
+        res = -1
+    End If
+    AddLabel = res
+End Function
+' Add this so the CPU can resolve "JMP START"
+Public Function GetAddress(ByVal labelName As String) As Long
+    If pLabels.Exists(labelName) Then
+        GetAddress = pLabels(labelName).clsAddress
+    Else
+        GetAddress = -1 ' Not found
+    End If
+End Function
+Public Function GetByXref(ByVal address As String) As clsLabelRecord
+    If pLabelXrefs.Exists(address) Then
+        Set GetByXref = pLabelXrefs(address)
+    Else
+        Set GetByXref = Nothing
+    End If
+End Function
+Public Sub ParseProcedures()
+    Dim data As Variant
+    Dim r As Long
+    Dim labelRec As clsLabelRecord
+    Dim lastRow As Long
+    Dim ofs_label, ofs_rowstat, ofs_op1, ofs_labelType As Integer
+    Dim labelName As String
+    Dim labelData As String
+
+    pProcedures.RemoveAll
+    ' Load the entire range into memory for speed
+    With ThisWorkbook.Sheets("CPU")
+        lastRow = .Cells(.Rows.Count, .Range("Procedures").Column).End(xlUp).row
+        data = .Range(.Range("Procedures"), .Cells(lastRow, .Range("Procedures").Column)).value
+    End With
+    For r = 1 To UBound(data, 1)
+        labelName = UCase(Trim(CStr(data(r, 1))))
+        If labelName <> "" Then
+            Set labelRec = New clsLabelRecord
+            labelRec.clsLabelType = "P"
+            If Not pProcedures.Exists(labelName) Then
+                pProcedures.ADD labelName, labelRec
+            End If
+        End If
+    Next r
+End Sub
+Public Function IsProc(ByVal labelName As String) As Boolean
+    IsProc = pProcedures.Exists(labelName)
+End Function
+
+'''
+' clsLabels
+'''
+
+
+''' Component: clsLabelRecord
+'''
+' -- clsLabelRecord.cls
+Public clsLabelType As String
+Public clsAddress As Long
+Public clsAddressHex As String
+Public clsSize As Integer
+Public clsData As String
+
+'''
+
+
+
+''' Component: Sheet4
+''' [No code]
+
+''' Component: Sheet5
+''' [No code]
+
+''' Component: TestRunner
+' TestRunner.bas  — DROP-IN (with per-test console progress)
+Option Explicit
+Public Sub RunDynamicTests()
+    Dim wsTest As Worksheet, wsEMU As Worksheet
+    Dim lastRow As Long, i As Long
+    Dim rangeName As String
+    Dim testRange As Range
+    Dim memCapacity As Long
+    Dim startCol As Integer, ofsOp As Integer, ofs_mem As Integer, ofs_label As Integer
+    Dim endCol As Integer, colWidth As Integer, runCol As Integer
+    Dim resultsCol As Long, calcCol As Long
+    Dim supplementalPassed As Boolean
+    Dim runTest As Boolean
+
+    ' Overall Status Tracking
+    Dim batchPassed As Boolean: batchPassed = True
+    Dim passCount As Long: passCount = 0
+    Dim totalTests As Long: totalTests = 0
+    Dim step As Boolean: step = Range("Step").value = 1
+
+    Set wsTest = Sheets("Unit Tests")
+    Set wsEMU = Sheets("CPU")
+
+    ' 1. Pull dynamic configuration
+    memCapacity = HexToDec(wsEMU.Range("MemSize").value)
+    startCol = wsEMU.Range("ofs_label").value
+    ofsOp = wsEMU.Range("ofs_opcode").value
+    ofs_mem = wsEMU.Range("ofs_mem").value
+    ofs_label = wsEMU.Range("ofs_label").value
+    endCol = wsEMU.Range("ofs_mem").value
+
+    ' Dynamic Column Mapping using TestRunner cell reference
+    resultsCol = wsTest.Range("TestRunner").Column
+    runCol = wsTest.Range("RunTest").Column
+    calcCol = resultsCol - 1
+    colWidth = (endCol - startCol) + 1
+
+    ' 2. PRE-RUN SETUP
+    If Not step Then
+        Application.ScreenUpdating = False
+    End If
+
+    ' Find total tests in Column A
+    lastRow = wsTest.Cells(wsTest.Rows.Count, "A").End(xlUp).row
+
+    For i = 1 To lastRow
+        rangeName = Trim(wsTest.Cells(i, 1).value)
+        If rangeName <> "" Then
+            runTest = Val(wsTest.Cells(i, runCol).value) = 1
+        End If
+
+        If rangeName <> "" And runTest Then
+            ' Update the Excel Status Bar (bottom toolbar)
+            Application.StatusBar = "Currently Running: " & rangeName
+
+            On Error Resume Next
+            Set testRange = wsTest.Range(rangeName)
+            On Error GoTo 0
+
+            If Not testRange Is Nothing Then
+                totalTests = totalTests + 1
+
+                ' --- BREADCRUMB (headless): announce test and repaint once ---
+                
+                If Sheets("CPU").Range("Step").value = 0 Then
+                    ConsolePrint "> Running " & rangeName, True
+                    DoEvents
+                End If
+
+
+                ' --- A. DYNAMIC CLEAR ---
+                wsEMU.Range("Line0").Offset(0, ofs_label).Resize(memCapacity + 1, ofs_mem).ClearContents
+                wsEMU.Range("Line0").Offset(0, startCol).Resize(memCapacity, 1).ClearContents
+
+                ' --- B. SELECTIVE TRANSFER ---
+                wsEMU.Range("Line0").Offset(0, ofs_label).Resize(testRange.Rows.Count, 4).value = _
+                    testRange.Columns(3).Resize(, 5).value
+
+                ' --- C. EXECUTION ---
+                wsEMU.Range("Reset").value = 1
+                Execute   ' selection-free + headless-aware engine
+
+                ' --- D. DUAL-LAYER VALIDATION ---
+                supplementalPassed = (wsTest.Cells(i, calcCol).value = 0)
+
+                If ValidateMultipleCriteria(testRange) And supplementalPassed Then
+                    wsTest.Cells(i, resultsCol).value = "PASS"
+                    wsTest.Cells(i, resultsCol).Interior.Color = vbGreen
+                    passCount = passCount + 1
+                Else
+                    wsTest.Cells(i, resultsCol).value = "FAIL"
+                    wsTest.Cells(i, resultsCol).Interior.Color = vbRed
+                    batchPassed = False
+                End If
+
+                ConsolePrint "Unit Test " & rangeName & ": " & wsTest.Cells(i, resultsCol).value, True
+
+                ' --- HEADLESS: repaint once per test so progress is visible ---
+                If Sheets("CPU").Range("Step").value = 0 Then
+                    DoEvents
+                End If
+            End If
+        End If
+
+        Set testRange = Nothing
+    Next i
+
+    ' 3. POST-RUN CLEANUP
+    Application.ScreenUpdating = True
+    Application.StatusBar = False
+
+    ' 4. FINAL OVERALL RESULT
+    Dim finalMsg As String
+    If batchPassed Then
+        finalMsg = "OVERALL RESULT: PASS" & vbCrLf & _
+                   "Passed " & passCount & " of " & totalTests & " tests."
+        MsgBox finalMsg, vbInformation, "Test Runner Success"
+    Else
+        finalMsg = "OVERALL RESULT: FAIL" & vbCrLf & _
+                   "Only " & passCount & " of " & totalTests & " tests passed."
+        MsgBox finalMsg, vbCritical, "Test Runner Failure"
+    End If
+End Sub
+
+Private Function ValidateMultipleCriteria(testSource As Range) As Boolean
+    Dim r As Long
+    Dim regName As String, expectedVal As String, actualVal As String
+    Dim allPassed As Boolean: allPassed = True
+    Dim useRegs As Boolean
+    Dim colExpectedReg As Integer, colExpectedVal As Integer
+
+    colExpectedReg = Range("ExpectedReg").Column - 1
+    colExpectedVal = Range("ExpectedVal").Column - 1
+
+    For r = 1 To testSource.Rows.Count
+        regName = Trim(testSource.Cells(r, colExpectedReg).value)
+        expectedVal = Trim(testSource.Cells(r, colExpectedVal).value)
+        If regName <> "" Then
+            If UCase(regName) = "CONSOLE" Then
+                allPassed = ConsoleContains(expectedVal)
+            Else
+                useRegs = regName Like "[ABCDEHL]"
+                On Error Resume Next
+                If useRegs Then
+                    actualVal = Sheets("CPU").Range("R_" & regName).value
+                Else
+                    actualVal = Sheets("CPU").Range(regName).value
+                End If
+                If UCase$(actualVal) <> UCase$(expectedVal) Then
+                    allPassed = False
+                End If
+            End If
+        End If
+        If Not allPassed Then
+            Exit For
+        End If
+    Next r
+
+    ValidateMultipleCriteria = allPassed
+End Function
+
+Private Sub TransferTestValues(sourceRange As Range, targetWs As Worksheet)
+    Dim rowCount As Long
+    Dim startColOffset As Integer
+    rowCount = sourceRange.Rows.Count
+    startColOffset = Range("ofs_label").value
+    targetWs.Range("Line0").Offset(0, startColOffset).Resize(rowCount, 5).value = _
+        sourceRange.Columns("B:F").value
+End Sub
+
+' Return True if the running console contains needle (case-insensitive by default)
+Public Function ConsoleContains(ByVal needle As String, Optional ByVal caseSensitive As Boolean = False) As Boolean
+    Dim txt As String
+    On Error Resume Next
+    txt = usrForm.tbConsole.text   ' read from the live default instance
+    On Error GoTo 0
+    If caseSensitive Then
+        ConsoleContains = (InStr(1, txt, needle, vbBinaryCompare) > 0)
+    Else
+        ConsoleContains = (InStr(1, txt, needle, vbTextCompare) > 0)
+    End If
+End Function
+
+' Return True if ALL parts appear in the console in the given order (not necessarily adjacent)
+Public Function ConsoleContainsInOrder(ParamArray parts() As Variant) As Boolean
+    Dim txt As String, pos As Long, i As Long, p As String, found As Long
+    On Error Resume Next
+    txt = usrForm.tbConsole.text
+    On Error GoTo 0
+    pos = 1
+    For i = LBound(parts) To UBound(parts)
+        p = CStr(parts(i))
+        found = InStr(pos, txt, p, vbTextCompare)
+        If found = 0 Then
+            ConsoleContainsInOrder = False
+            Exit Function
+        End If
+        pos = found + Len(p)
+    Next i
+    ConsoleContainsInOrder = True
+End Function
+
+
+''' Component: usrForm
+Public Sub ClearConsole()
+    Me.tbConsole.Locked = False
+    Me.tbConsole.text = vbNullString
+    Me.tbConsole.Locked = True
+    Me.tbConsole.SelStart = 0
+End Sub
+
+Public Sub PrtLn(ByVal s As String, Optional ByVal prtSpace As Boolean = False)
+    Me.tbConsole.Locked = False
+    If Len(Me.tbConsole.text) > 0 Then
+        If prtSpace Then Me.tbConsole.text = Me.tbConsole.text & " "
+        Me.tbConsole.text = Me.tbConsole.text & s & vbCrLf
+    Else
+        Me.tbConsole.text = s & vbCrLf
+    End If
+    Me.tbConsole.SelStart = Len(Me.tbConsole.text)
+    Me.tbConsole.SelLength = 0
+    Me.tbConsole.Locked = True
+    If Sheets("CPU").Range("Step").value = 1 Then DoEvents
+End Sub
+
+Public Sub Prt(ByVal s As String, Optional ByVal prtSpace As Boolean = False)
+    Me.tbConsole.Locked = False
+    If Len(Me.tbConsole.text) > 0 Then
+        If prtSpace Then Me.tbConsole.text = Me.tbConsole.text & " "
+        Me.tbConsole.text = Me.tbConsole.text & s
+    Else
+        Me.tbConsole.text = s
+    End If
+    Me.tbConsole.SelStart = Len(Me.tbConsole.text)
+    Me.tbConsole.SelLength = 0
+    Me.tbConsole.Locked = True
+    If Sheets("CPU").Range("Step").value = 1 Then DoEvents
+End Sub
+
+''' Component: Exportcode
+' Requires: Tools > References... > check "Microsoft Visual Basic for Applications Extensibility 5.3"
+' Also: File > Options > Trust Center > Trust Center Settings... > Macro Settings > check
+'       "Trust access to the VBA project object model" (temporarily, to export)
+
+Option Explicit
+
+' Requires reference: Microsoft Visual Basic for Applications Extensibility 5.3
+' And Trust Center: "Trust access to the VBA project object model"
+Public Sub ExportAllVbaToSingleText()
+    Dim vbProj As Object ' Changed to Object for late binding safety
+    Dim vbComp As Object
+    Dim codeMod As Object
+    Dim f As Integer
+    Dim outputDir As Variant
+    Dim baseName As String
+    Dim timeStamp As String
+    Dim finalFileName As String
+    Dim outputPath As String
+    Dim fullPathXlsm As String
+    Dim lastLine As Long
+    Dim fso As Object
+
+    ' 1. Create Timestamp
+    timeStamp = Format(Now, "yyyy-mm-dd_HHmm")
+    
+    ' 2. Get Workbook name without extension
+    baseName = ThisWorkbook.name
+    If InStrRev(baseName, ".") > 0 Then
+        baseName = Left(baseName, InStrRev(baseName, ".") - 1)
+    End If
+    
+    ' 3. Combine for a consistent filename
+    finalFileName = baseName & "_" & timeStamp
+
+    ' 4. Define Output Paths (Fixed array size to 1 for two items)
+    Dim outputs(1) As String
+    outputs(0) = "C:\Users\jschaal\source\repos\Assembler 8080\Assembler 8080\Source\"
+    outputs(1) = "C:\Users\jschaal\OneDrive - Distribuidora La Florida S.A\Dev\asm\snapshots\"
+    
+    Set fso = CreateObject("Scripting.FileSystemObject")
+
+    For Each outputDir In outputs
+        ' Ensure directory ends with backslash
+        If Right(outputDir, 1) <> "\" Then outputDir = outputDir & "\"
+        
+        ' Set specific file paths
+        outputPath = outputDir & finalFileName & ".txt"
+        fullPathXlsm = outputDir & finalFileName & ".xlsm"
+
+        ' Ensure directory exists
+        On Error Resume Next
+        If Not fso.FolderExists(outputDir) Then fso.CreateFolder outputDir
+        On Error GoTo 0
+    
+        ' Open the file for text output
+        f = FreeFile
+        Open outputPath For Output As #f
+
+        Set vbProj = ThisWorkbook.VBProject
+    
+        Print #f, "=== VBA EXPORT: " & ThisWorkbook.name & " ==="
+        Print #f, "Timestamp: " & Now
+        Print #f, String(80, "=")
+    
+        For Each vbComp In vbProj.VBComponents
+            Set codeMod = vbComp.CodeModule
+            lastLine = codeMod.CountOfLines
+            
+            ' Note: Ensure ComponentTypeName function exists in your module
+            Print #f, vbCrLf & "''' Component: " & vbComp.name
+    
+            If lastLine > 0 Then
+                Print #f, codeMod.lines(1, lastLine)
+            Else
+                Print #f, "''' [No code]"
+            End If
+        Next vbComp
+    
+        Close #f
+        
+        ' Save the binary copy
+        ThisWorkbook.SaveCopyAs fullPathXlsm
+    Next outputDir
+
+    MsgBox "Export complete for: " & finalFileName, vbInformation
+End Sub
+
+Private Function ComponentTypeName(typeId As VBIDE.vbext_ComponentType) As String
+    Select Case typeId
+        Case vbext_ct_StdModule: ComponentTypeName = "Module"
+        Case vbext_ct_ClassModule: ComponentTypeName = "Class"
+        Case vbext_ct_MSForm: ComponentTypeName = "UserForm"
+        Case vbext_ct_Document: ComponentTypeName = "Document (Sheet/Workbook)"
+        Case Else: ComponentTypeName = CStr(typeId)
+    End Select
+End Function
+
+Public Function CleanFileName(ByVal fileName As String) As String
+    Dim dotPosition As Integer
+    
+    ' 1. Find the last dot to identify where the extension starts
+    dotPosition = InStrRev(fileName, ".")
+    
+    ' 2. If a dot exists, strip the extension; otherwise, keep the whole name
+    If dotPosition > 0 Then
+        fileName = Left(fileName, dotPosition - 1)
+    End If
+    
+    ' 3. Substitute spaces with underscores
+    CleanFileName = Replace(fileName, " ", "_")
+End Function
+
+''' Component: modGlobal
+' In a Standard Module
+Private pCPU As clsCPU  ' This holds the actual object reference
+
+Public Property Get gCPU() As clsCPU
+    ' Static reference check
+    If pCPU Is Nothing Then
+        Set pCPU = New clsCPU
+    End If
+    
+    Set gCPU = pCPU
+End Property
+
+Public Sub ResetCPU()
+    Set pCPU = Nothing
+End Sub
