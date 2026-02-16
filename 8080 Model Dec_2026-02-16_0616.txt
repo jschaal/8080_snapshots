@@ -1,5 +1,5 @@
 === VBA EXPORT: 8080 Model Dec.xlsm ===
-Timestamp: 2/16/2026 12:50:07 PM
+Timestamp: 2/16/2026 6:16:33 AM
 ================================================================================
 
 ''' Component: ThisWorkbook
@@ -10,6 +10,369 @@ Timestamp: 2/16/2026 12:50:07 PM
 
 ''' Component: Sheet2
 ''' [No code]
+
+''' Component: Assemble
+Option Explicit
+'================================================================================
+' Module:       Assemble
+' Purpose:      Execution harness for the Excel/VBA Intel 8080 emulator.
+'               - Initializes/rehydrates CPU and memory
+'               - Selection-free, headless-aware main loop
+'               - Routes opcodes to clsCPU
+'               - Console helpers (modeless output form)
+'
+' Notes:        This is documentation/reformat only. No functional changes.
+' Source:       Stable snapshot (2026-02-12 18:38)  ? Export reference.
+'================================================================================
+
+' Tracks whether the console form is open
+Private mConsoleOpen As Boolean
+
+'------------------------------------------------------------------------------
+' Execute
+' Entry point for a run. Honours "Reset" and "Step" (headless) flags on the CPU
+' sheet. Bulk-reads instruction columns to arrays for performance. Routes each
+' opcode to RunOpcode (which dispatches into clsCPU).
+'
+' Sheet bindings (named ranges expected on "CPU"):
+'   Start_PC, PC, Reset, Error, errMessage
+'   MemStart, MemSize, MemEnd
+'   ofs_opcode, ofs_op1, ofs_op2, ofs_rowstat, ofs_label
+'   Line0 (first row of memory/instruction grid), StackStart, StackDetails,
+'   consoleOut, Step
+'------------------------------------------------------------------------------
+Public Sub Execute()
+    Dim pc As Long
+    Dim opcode As String
+    Dim op1 As String, op2 As String
+    Dim ofs_opcode As Integer, ofs_op1 As Integer, ofs_op2 As Integer, ofs_rowstat As Integer
+    Dim Reset As Integer, errcode As Integer
+    Dim rowStat As String
+    Dim memStart As Long, memSize As Long, memEnd As Long
+    Dim myCpu As clsCPU
+    Dim headless As Boolean
+    Dim prevCalc As XlCalculation
+
+    ' ========= Initialization =========
+    InitHexTable
+    pc = Range("Start_PC").value
+    Range("PC").value = pc
+    ofs_opcode = Range("ofs_opcode").value
+    ofs_op1 = Range("ofs_op1").value
+    ofs_op2 = Range("ofs_op2").value
+    ofs_rowstat = Range("ofs_rowstat").value
+
+    Reset = Range("Reset").value
+    errcode = 0
+    Range("Error").value = 0
+    Range("errMessage").value = ""
+
+    memStart = HexToDec(Range("MemStart").value)
+    memSize = HexToDec(Range("MemSize").value)
+    memEnd = memStart + memSize
+
+    Set myCpu = gCPU
+
+    If Reset = 0 Then
+        ' Continue run: rehydrate CPU state from sheet
+        myCpu.Reg("PC") = pc
+        myCpu.LDARegs
+        pc = myCpu.SetPC(HexToDec(Range("PC").value))
+        myCpu.Reg("SP") = Range("SP").value
+    Else
+        ' Fresh run
+        ResetCPU
+        Set myCpu = gCPU
+        mConsoleOpen = False
+        ResetRegisters
+
+        pc = 0
+        myCpu.SetPC (Range("Line0").value)
+        myCpu.Reg("SP") = hex(memEnd)
+        Range("StackStart").value = myCpu.Reg("SP")
+
+        Range("Mem").ClearContents
+        Range("StackDetails").ClearContents
+        Range("consoleOut").value = ""
+
+        myCpu.ShowFlags
+    End If
+
+    ' ========= Headless toggle =========
+    'headless = (Range("Step").value = 0)
+    headless = True
+    If headless Then
+        myCpu.BeginDeferUI
+        Application.ScreenUpdating = False
+        Application.EnableEvents = False
+        prevCalc = Application.Calculation
+        Application.Calculation = xlCalculationManual
+    End If
+
+    ' ========= Selection-free main loop with bulk reads =========
+    Dim base As Range, line0Dec As Long
+    Set base = Range("Line0")
+    line0Dec = CLng(base.value) ' Dec Line at Line0 (baseline)
+
+    ' Number of rows to preload (MemStart..MemEnd)
+    Dim countRows As Long
+    countRows = (memEnd - memStart) + 1
+    If countRows < 1 Then countRows = 1
+
+    ' Load ONLY the columns we need into arrays
+    Dim arrOpcode As Variant, arrRowStat As Variant
+    Dim arrOp1 As Variant, arrOp2 As Variant
+
+    arrOpcode = base.Offset(0, ofs_opcode).Resize(countRows, 1).value
+    arrRowStat = base.Offset(0, ofs_rowstat).Resize(countRows, 1).value
+    arrOp1 = base.Offset(0, ofs_op1).Resize(countRows, 1).value
+    arrOp2 = base.Offset(0, ofs_op2).Resize(countRows, 1).value
+
+    Dim ubRows_Opcode As Long, ubRows_RowStat As Long
+    ubRows_Opcode = UBound(arrOpcode, 1)
+    ubRows_RowStat = UBound(arrRowStat, 1)
+
+    ' Optional one-time normalization for the hot loop
+    Const NormalizeInputs As Boolean = True
+    If NormalizeInputs Then
+        Dim idxN As Long
+        For idxN = 1 To countRows
+            If Not IsEmpty(arrOpcode(idxN, 1)) Then arrOpcode(idxN, 1) = Trim$(UCase$(CStr(arrOpcode(idxN, 1))))
+            If Not IsEmpty(arrRowStat(idxN, 1)) Then arrRowStat(idxN, 1) = Trim$(UCase$(CStr(arrRowStat(idxN, 1))))
+            If Not IsEmpty(arrOp1(idxN, 1)) Then arrOp1(idxN, 1) = Trim$(UCase$(CStr(arrOp1(idxN, 1))))
+            If Not IsEmpty(arrOp2(idxN, 1)) Then arrOp2(idxN, 1) = Trim$(UCase$(CStr(arrOp2(idxN, 1))))
+        Next idxN
+    End If
+
+    ' Compute starting row index from PC (hex text in clsCPU)
+    Dim pcDec As Long, rowIdx As Long
+    pcDec = CLng(HexToDec(CStr(myCpu.Reg("PC"))))
+    rowIdx = pcDec - line0Dec
+
+    ' Bounds before first read
+    If rowIdx < 0 Or rowIdx >= ubRows_Opcode Then
+        errcode = -200  ' END-like termination
+        GoTo ExecFinalize
+    End If
+
+    ' First opcode from array
+    opcode = CStr(arrOpcode(rowIdx + 1, 1))
+
+    ' Prepare Range row for EQU label resolution
+    Dim curRow As Range
+    Set curRow = base.Offset(rowIdx, 0)
+
+    ' ---- Throttle state (baseline 250ms) ----
+    Dim instrCount As Long: instrCount = 0
+    Dim nextPaint As Double: nextPaint = Timer + 0.25
+    If headless Then DoEvents
+
+    Do While errcode = 0 And pcDec <= memEnd
+        ' Read operands / row status from arrays
+        op1 = CStr(arrOp1(rowIdx + 1, 1))
+        op2 = CStr(arrOp2(rowIdx + 1, 1))
+
+        If rowIdx >= 0 And rowIdx < ubRows_RowStat Then
+            rowStat = CStr(arrRowStat(rowIdx + 1, 1))
+        Else
+            rowStat = Trim$(UCase$(CStr(curRow.Offset(0, ofs_rowstat).value)))
+        End If
+
+        ' Skip compiled rows (RowStat="C") and blanks
+        If rowStat <> "C" And opcode <> "" Then
+            errcode = RunOpcode(myCpu, opcode, op1, op2, curRow)
+            If errcode <> 0 Then
+                ' -9999 = Invalid opcode (consistent with clsCPU errors)
+                If errcode = -9999 Then
+                    Range("Error").value = errcode
+                    Range("errMessage").value = "Error: Invalid OpCode: " & opcode & " at Line " & pcDec
+                End If
+            End If
+        End If
+
+        ' Throttled repaint during headless runs (console progress)
+        instrCount = instrCount + 1
+        If headless Then
+            If Timer >= nextPaint Then
+                DoEvents
+                nextPaint = Timer + 0.25
+            End If
+        End If
+
+        ' Advance PC and compute next row
+        pcDec = myCpu.IncPC()
+        rowIdx = pcDec - line0Dec
+        If rowIdx < 0 Or rowIdx >= ubRows_Opcode Then Exit Do
+
+        ' Next opcode from array
+        opcode = CStr(arrOpcode(rowIdx + 1, 1))
+
+        ' Keep Range row current for EQU
+        Set curRow = base.Offset(rowIdx, 0)
+        ' (RowStat fetched at top of next iteration)
+    Loop
+
+ExecFinalize:
+    ' ========= Finalization =========
+    If headless Then
+        myCpu.EndDeferUI
+        Application.Calculation = prevCalc
+        Application.EnableEvents = True
+        Application.ScreenUpdating = True
+        Application.StatusBar = False
+        Range("consoleText") = usrForm.tbConsole.value
+    End If
+
+    If Range("Error").value = 0 Or Range("Error").value = -200 Then
+        Range("errMessage") = "Execution Complete"
+    End If
+End Sub
+
+'------------------------------------------------------------------------------
+' ResetRegisters
+' Clears sheet register display cells (not CPU object) for A..L, PC, SP view.
+'------------------------------------------------------------------------------
+Public Sub ResetRegisters()
+    Dim i As Integer
+    For i = 0 To 8
+        Range("Registers").Offset(i, 2).value = 0
+    Next i
+End Sub
+
+'------------------------------------------------------------------------------
+' RunOpcode
+' Routes a normalized opcode to its clsCPU implementation.
+' Parameters:
+'   myCpu  - CPU instance
+'   opcode - already UCase/Trim by Execute (kept redundant for safety)
+'   op1/op2 - operands (normalized by Execute)
+'   curRow  - the line's Range for context (EQU label lookup)
+' Returns:
+'   0 on success; negative / nonzero error codes for fault/END
+'------------------------------------------------------------------------------
+Public Function RunOpcode( _
+    ByRef myCpu As clsCPU, ByVal opcode As String, _
+    ByVal op1 As String, ByVal op2 As String, _
+    Optional ByVal curRow As Range = Nothing) As Integer
+
+    Dim res As Integer
+    res = 0
+
+    'opcode = Trim$(UCase$(opcode))
+    Select Case opcode
+        Case "ADD": res = myCpu.ADD(op1)      ' 120xx
+        Case "ADI": res = myCpu.ADI(op1)      ' 130xx
+        Case "ANA": res = myCpu.ANA(op1)      ' 140xx
+        Case "ANI": res = myCpu.ANI(op1)      ' 150xx
+        Case "CMP": res = myCpu.CMP(op1)      ' 190xx
+        Case "CPI": res = myCpu.CPI(op1)      ' 200xx
+        Case "CALL": res = myCpu.CALL_(op1, op2)         ' 160xx error base inside
+        Case "DB":   res = 0                              ' data pseudo-op
+        Case "EQU"                                        ' 300xx error base inside
+            If curRow Is Nothing Then
+                res = myCpu.EQU(op1, "")
+            Else
+                res = myCpu.EQU(op1, CStr(curRow.Offset(0, Range("ofs_label").value).value))
+            End If
+        Case "END":  res = -200                           ' soft termination
+        Case "DCR":  res = myCpu.DCR(op1)                 ' 230xx
+        Case "HLT":  res = myCpu.HLT()                    ' -100
+        Case "INR":  res = myCpu.INR(op1)                 ' 280xx
+        Case "JC":   res = myCpu.JC(op1)
+        Case "JM":   res = myCpu.JM(op1)
+        Case "JMP":  res = myCpu.JMP(op1)                 ' 300xx
+        Case "JNC":  res = myCpu.JNC(op1)
+        Case "JNZ":  res = myCpu.JNZ(op1)
+        Case "JP":   res = myCpu.JP(op1)
+        Case "JPE":  res = myCpu.JPE(op1)
+        Case "JPO":  res = myCpu.JPO(op1)
+        Case "JZ":   res = myCpu.JZ(op1)
+        Case "LXI":  res = myCpu.LXI(op1, op2)            ' 340xx
+        Case "MOV":  res = myCpu.MOV(op1, op2)            ' 350xx
+        Case "MVI":  res = myCpu.MVI(op1, op2)            ' 360xx
+        Case "ORA":  res = myCpu.ORA(op1)                 ' 380xx
+        Case "ORI":  res = myCpu.ORI(op1)                 ' 390xx
+        Case "POP":  res = myCpu.POP(op1)                 ' 420xx
+        Case "PUSH": res = myCpu.PUSH(op1)                ' 430xx
+        Case "RET":  res = myCpu.RET()                    ' 460xx
+        Case Else
+            res = -9999                                   ' unrecognized opcode
+    End Select
+
+    RunOpcode = res
+End Function
+
+'------------------------------------------------------------------------------
+' HEX2ASCII
+' Returns '.' for non-printables and '?' for invalid hex.
+'------------------------------------------------------------------------------
+Public Function HEX2ASCII(ByVal hexRange As Variant) As String
+    Dim hexVal As String
+    Dim decVal As Integer
+
+    If IsEmpty(hexRange) Or hexRange = "" Then
+        HEX2ASCII = ""
+        Exit Function
+    End If
+
+    hexVal = CStr(hexRange)
+    On Error Resume Next
+    decVal = Application.WorksheetFunction.Hex2Dec(hexVal)
+    If Err.Number <> 0 Then
+        HEX2ASCII = "?"
+        Exit Function
+    End If
+    On Error GoTo 0
+
+    If decVal >= 32 And decVal <= 126 Then
+        HEX2ASCII = Chr(decVal)
+    Else
+        HEX2ASCII = "."
+    End If
+End Function
+
+'------------------------------------------------------------------------------
+' HexToDec
+' Safe hex string -> long (uses &H prefix trick)
+'------------------------------------------------------------------------------
+Public Function HexToDec(ByVal op1 As String) As Long
+    HexToDec = Val("&H" & op1)
+End Function
+
+'------------------------------------------------------------------------------
+' Console utilities (modeless)
+'------------------------------------------------------------------------------
+Public Sub ConsolePrint(ByVal text As String, _
+                        Optional ByVal crlf As Boolean = True, _
+                        Optional ByVal prtSpace As Boolean = False)
+    ' 1) Always update the authoritative buffer synchronously
+    ConsoleBuffer_Append text, crlf, prtSpace
+
+    ' 2) Optionally update the UI (unchanged behavior)
+    'If Not mConsoleOpen Then ShowConsole
+    If crlf Then
+        usrForm.ConPrtLn text, prtSpace
+    Else
+        usrForm.ConPrt text, prtSpace
+    End If
+End Sub
+
+
+Public Sub ClearConsole()
+    usrForm.ClearConsole
+End Sub
+
+Public Sub ShowConsole()
+    usrForm.Show vbModeless
+    mConsoleOpen = True
+End Sub
+
+
+
+'================================================================================
+' Module:       Assemble
+'================================================================================
+
 
 ''' Component: clsCPU
 Option Explicit
@@ -586,9 +949,9 @@ Public Function LXI(ByVal op1 As String, op2 As String) As Integer
             sp = HexToDec(op2)
             ofs_mem = Range("ofs_mem").value
             memStart = HexToDec(Range("MemStart").value)
-'            If Sheets("CPU").Range("Step").value = 1 Then
-'                Range("line0").Offset(sp - memStart, ofs_mem).value = "FF"
-'            End If
+            If Sheets("CPU").Range("Step").value = 1 Then
+                Range("line0").Offset(sp - memStart, ofs_mem).value = "FF"
+            End If
             pStack.ShowStack
     End Select
 
@@ -1504,7 +1867,7 @@ Public Sub RunDynamicTests()
                 End If
 
                 ConsolePrint wsTest.Cells(nameRow, resultsCol).value, True
-                'If Not stepMode Then DoEvents
+                If Not stepMode Then DoEvents
             Else
                 wsTest.Cells(nameRow, resultsCol).value = "SKIPPED"
                 wsTest.Cells(nameRow, resultsCol).Interior.Color = RGB(200, 200, 200)
@@ -1722,7 +2085,7 @@ End Function
 ' valueToSet: 0 or 1 (we’ll use 0 on PASS as requested).
 Private Sub SetRunFlagInControlTable(ByVal testName As String, ByVal valueToSet As Long)
     Dim ws As Worksheet: Set ws = Sheets("Unit Tests")
-    Dim firstCell As Range: Set firstCell = ws.Range("TestTable")   ' top-left of the control table (header row)
+    Dim firstCell As Range: Set firstCell = ws.Range("P5")   ' top-left of the control table (header row)
     
     ' Find the last used row of the control table based on Column P (TestName column).
     Dim lastRow As Long
@@ -1748,31 +2111,6 @@ Private Sub SetRunFlagInControlTable(ByVal testName As String, ByVal valueToSet 
     ' Set Run (Column R) to the requested value (0 on PASS)
     ws.Cells(targetRow, firstCell.Column + 2).value = valueToSet
 End Sub
-Public Sub ResetTestCases()
-    Dim ws As Worksheet: Set ws = Sheets("Unit Tests")
-    Dim firstCell As Range: Set firstCell = ws.Range("TestTable")   ' top-left of the control table (header row)
-    Dim lastRow As Long
-    lastRow = ws.Cells(ws.Rows.Count, firstCell.Column + 1).End(xlUp).row
-    If lastRow < firstCell.row + 1 Then Exit Sub  ' no data rows
-    
-    Dim rngNames As Range
-    Set rngNames = ws.Range(firstCell.Offset(1, 0), ws.Cells(lastRow, firstCell.Column))
-    Dim idx As Range
-    Dim targetRow As Long
-    Dim testName As String
-    Application.ScreenUpdating = False
-    For Each idx In rngNames
-    ' Compute the row for Column R (Run column): that’s P + 2 columns
-        targetRow = idx.row
-        testName = ws.Cells(targetRow, firstCell.Column + 1).value
-        If testName <> "" Then
-            ws.Cells(targetRow, firstCell.Column + 2).value = 1
-        End If
-    Next idx
-    Application.ScreenUpdating = True
-
-End Sub
-
 '================================================================================
 ' Module:       TestRunner
 '================================================================================
@@ -1981,6 +2319,93 @@ Public Function CleanFileName(ByVal fileName As String) As String
 End Function
 
 
+''' Component: modGlobal
+Option Explicit
+'================================================================================
+' Module:       modGlobal
+' Purpose:      Holds the singleton clsCPU instance and reset routine.
+'               - gCPU() returns a live instance (lazily created)
+'               - ResetCPU drops the instance so next gCPU() creates a fresh one
+'
+' Notes:        No functional change.
+' Source:       Stable snapshot (2026-02-12 18:38)
+'================================================================================
+
+Private pCPU As clsCPU ' actual object reference
+Private HexTable(0 To 255) As String
+Private mIHexIintialized As Boolean
+' --- Console buffer (authoritative text for tests) ---
+Private gConsoleBuffer As String
+
+'------------------------------------------------------------------------------
+' gCPU
+' Returns the shared CPU instance, creating it if necessary.
+'------------------------------------------------------------------------------
+Public Property Get gCPU() As clsCPU
+    If pCPU Is Nothing Then
+        Set pCPU = New clsCPU
+    End If
+    Set gCPU = pCPU
+End Property
+
+'------------------------------------------------------------------------------
+' ResetCPU
+' Discards the current instance; next gCPU() call will re-create it.
+'------------------------------------------------------------------------------
+Public Sub ResetCPU()
+    Set pCPU = Nothing
+End Sub
+Public Sub InitHexTable()
+    Dim i As Long ' Use Long to avoid overflow during loop
+    For i = 0 To 255
+        ' IMPORTANT: Use the built-in Hex$ function here, NOT FastHex
+        HexTable(i) = Right$("0" & hex$(i), 2)
+    Next i
+    mIHexIintialized = True
+End Sub
+Public Function FastHex(ByVal value As Long) As String
+    If Not mIHexIintialized Then InitHexTable
+    
+    ' Handle values as 16-bit if they exceed 255
+    ' This covers PC, SP, and address operands automatically
+    If value > 255 Then
+        FastHex = HexTable(value \ 256) & HexTable(value Mod 256)
+    ElseIf value < 0 Then
+        ' Handle potential negative overflows if any
+        FastHex = "0000"
+    Else
+        ' Standard 8-bit register (A, B, C, etc.)
+        FastHex = HexTable(value)
+    End If
+End Function
+
+
+Public Sub ConsoleBuffer_Clear()
+    gConsoleBuffer = vbNullString
+End Sub
+
+Public Sub ConsoleBuffer_Append(ByVal s As String, Optional ByVal addCrlf As Boolean = False, Optional ByVal addLeadingSpace As Boolean = False)
+    If addLeadingSpace And Len(gConsoleBuffer) > 0 Then gConsoleBuffer = gConsoleBuffer & " "
+    gConsoleBuffer = gConsoleBuffer & s
+    If addCrlf Then gConsoleBuffer = gConsoleBuffer & vbCrLf
+End Sub
+
+Public Function ConsoleBuffer_Text() As String
+    ConsoleBuffer_Text = gConsoleBuffer
+End Function
+
+Public Sub SelectEngine()
+    If Sheets("CPU").Range("Use_Alt").value = 1 Then
+        decExecute
+    Else
+        Execute
+    End If
+End Sub
+'================================================================================
+' Module:       modGlobal
+'================================================================================
+
+
 ''' Component: clsDecCPU
 Option Explicit
 '================================================================================
@@ -2131,6 +2556,8 @@ Public Function ADD(ByVal op1 As String) As Long
     SetSign result
     SetZero result
     SetParity result
+    mUIFlagsDirty = True
+    mUIRegsDirty = True
     
     ADD = 0
 End Function
@@ -2165,6 +2592,8 @@ Public Function ADI(ByVal op1 As String) As Long
     SetSign result
     SetZero result
     SetParity result
+    mUIFlagsDirty = True
+    mUIRegsDirty = True
     
     ADI = 0
 End Function
@@ -2181,7 +2610,7 @@ Public Function ANA(ByVal op1 As String) As Long
     If Not pRegs.Exists(op1) Then SetError errorBase + 1, "ANA: Invalid Register: " & op1: ANA = errorBase + 1: Exit Function
 
     dec_a = pRegs("A") And 255
-    dec_op = pRegs(op1) And 255
+    dec_op = HexToDec(pRegs(op1)) And 255
     result = (dec_a And dec_op) And 255
 
     SetReg "A", result
@@ -2190,6 +2619,8 @@ Public Function ANA(ByVal op1 As String) As Long
     SetSign result
     SetZero result
     SetParity result
+    mUIFlagsDirty = True
+    mUIRegsDirty = True
     
     ANA = 0
 End Function
@@ -2219,6 +2650,8 @@ Public Function ANI(ByVal op1 As String) As Long
     SetSign result
     SetZero result
     SetParity result
+    mUIFlagsDirty = True
+    mUIRegsDirty = True
     
     ANI = 0
 End Function
@@ -2249,6 +2682,7 @@ Public Function CMP(ByVal op1 As String) As Long
     SetSign result
     SetZero result
     SetParity result
+    mUIFlagsDirty = True
     
     CMP = 0
 End Function
@@ -2282,6 +2716,7 @@ Public Function CPI(ByVal op1 As String) As Long
     SetSign result
     SetZero result
     SetParity result
+    mUIFlagsDirty = True
     
     CPI = 0
 End Function
@@ -2334,6 +2769,7 @@ Public Function CALL_(ByVal op1 As String, Optional ByVal op2 As String = "") As
     pPC_dec = record.clsAddress - 1
     SetPC pPC_dec
     
+    mUIRegsDirty = True
     CALL_ = 0
 End Function
 
@@ -2369,6 +2805,8 @@ Public Function DCR(ByVal op1 As String) As Long
     SetSign result
     SetParity result
     SetReg op1, result
+    mUIFlagsDirty = True
+    mUIRegsDirty = True
 
     DCR = 0
 End Function
@@ -2434,6 +2872,8 @@ Public Function INR(ByVal op1 As String) As Long
     SetSign result
     SetParity result
     SetReg op1, result
+    mUIFlagsDirty = True
+    mUIRegsDirty = True
     
 INR = 0
 End Function
@@ -2466,6 +2906,7 @@ Public Function JMP(op1 As String) As Long
     If op_dec < 0 Or op_dec > memEnd_dec Then SetError errorBase + 3, "JMP: Invalid Address: " & op1: JMP = errorBase + 3: Exit Function
 
     SetPC op_dec - 1
+    mUIRegsDirty = True
 
     JMP = 0
 End Function
@@ -2576,6 +3017,7 @@ Public Function LXI(ByVal op1 As String, op2 As String) As Long
             mUIStackDirty = True
 
     End Select
+    mUIRegsDirty = True
     
     LXI = 0
 End Function
@@ -2595,6 +3037,7 @@ Public Function MOV(ByVal op1 As String, ByVal op2 As String) As Long
     Else
         SetError errorBase + 1, "MOV: Invalid Registers: " & op1 & " " & op2: MOV = errorBase + 1: Exit Function
     End If
+    mUIRegsDirty = True
     MOV = 0
 End Function
 
@@ -2620,6 +3063,7 @@ Public Function MVI(ByVal op1 As String, ByVal op2 As String) As Long
     Else
         SetError errorBase + 2, "MVI: Invalid Register: " & op1: MVI = errorBase + 2: Exit Function
     End If
+    mUIRegsDirty = True
     
     MVI = 0
 End Function
@@ -2647,6 +3091,7 @@ Public Function ORA(ByVal op1 As String) As Long
     SetSign result
     SetZero result
     SetParity result
+    mUIFlagsDirty = True
     
     ORA = 0
 End Function
@@ -2693,6 +3138,8 @@ Public Function ORI(ByVal op1 As String) As Long
     SetSign result
     SetZero result
     SetParity result
+    mUIFlagsDirty = True
+    mUIRegsDirty = True
 
 
     ORI = 0
@@ -2728,18 +3175,20 @@ Friend Function POP(ByVal op1) As Long
         Case "PSW"
             SetReg "A", decHigh
             flagByte = decLow And 255
-            pFlags("Sign") = IIf((flagByte And 128) <> 0, 1, 0)
-            pFlags("Zero") = IIf((flagByte And 64) <> 0, 1, 0)
-            pFlags("AC") = IIf((flagByte And 16) <> 0, 1, 0)
-            pFlags("Parity") = IIf((flagByte And 4) <> 0, 1, 0)
+
+            SetSign IIf((flagByte And 128) <> 0, 1, 0)
+            SetZero IIf((flagByte And 64) <> 0, 1, 0)
+            SetAC IIf((flagByte And 16) <> 0, 1, 0)
+            SetParity IIf((flagByte And 4) <> 0, 1, 0)
             pFlags("Flag") = 1
-            pFlags("Carry") = IIf((flagByte And 1) <> 0, 1, 0)
+            SetCarry IIf((flagByte And 1) <> 0, 1, 0)
             mUIFlagsDirty = True
         Case Else
             SetError errorBase + 1, "POP: Invalid Register: " & op1: POP = errorBase + 1: Exit Function
     End Select
 
     SetReg "SP", sp
+    mUIRegsDirty = True
     
     POP = res
 End Function
@@ -2779,7 +3228,7 @@ Public Function PUSH(ByVal op1) As Long
             If pFlags("Parity") = 1 Then flagByte = flagByte + 4
             flagByte = flagByte + 2     ' reserved bit set
             If pFlags("Carry") = 1 Then flagByte = flagByte + 1
-            
+
             pStack.clsPUSH sp, flagByte, "Flags"
         Case Else
             SetError errorBase + 1, "PUSH: Invalid Register: " & op1: PUSH = errorBase + 1: Exit Function
@@ -2826,6 +3275,7 @@ Public Function RET() As Long
 
     newPC = HexToDec(retAddress) - 1
     SetPC newPC
+    mUIRegsDirty = True
 
     RET = 0
 End Function
@@ -2919,7 +3369,6 @@ End Function
 Public Function SetPC(ByVal address As Long)
     pPC_dec = address
     pRegs("PC") = pPC_dec
-    mUIRegsDirty = True
     SetPC = pPC_dec
 End Function
 
@@ -2946,36 +3395,30 @@ Public Function ParityCalc(ByVal bits As Byte) As Long
 End Function
 Private Function SetParity(ByVal bits As Byte) As Long
     pFlags("Parity") = ParityCalc(bits)
-    mUIFlagsDirty = True
     SetParity = pFlags("Parity")
 End Function
 Private Function SetSign(bits As Long) As Long
     Dim sign As Long
     sign = IIf((bits And 128) > 0, 1, 0)
     pFlags("Sign") = sign
-    mUIFlagsDirty = True
     SetSign = sign
 End Function
 Private Function SetAC(bits As Long) As Long
     pFlags("AC") = bits And 1
-    mUIFlagsDirty = True
     SetAC = bits
 End Function
 Private Function SetCarry(bits As Long) As Long
     pFlags("Carry") = bits And 1
-    mUIFlagsDirty = True
     SetCarry = bits
 End Function
 Public Function SetZero(result As Long) As Long
     pFlags("Zero") = IIf(result = 0, 1, 0)
-    mUIFlagsDirty = True
     SetZero = pFlags("Zero")
 End Function
 
 ' SetReg always updates internal state; paints UI only if not deferred.
 Public Function SetReg(ByVal register As String, ByVal value As Long)
     pRegs(register) = value
-    mUIRegsDirty = True
     SetReg = value
 End Function
 
@@ -3052,26 +3495,19 @@ End Property
 Public Function RefreshStack(ByVal refresh) As Boolean
     RefreshStack = pStack.ShowStack(refresh)
 End Function
-
 '================================================================================
 ' Class:        clsDecCPU
 '================================================================================
 
 
 
-''' Component: modGlobals
+''' Component: modgDecCPU
 Option Explicit
 '================================================================================
-' Module:       modGlobals
+' Module:       modgDecPC
 '================================================================================
 
 Private pCPU As clsDecCPU ' actual object reference
-Private HexTable(0 To 255) As String
-Private mIHexIintialized As Boolean
-' --- Console buffer (authoritative text for tests) ---
-Private gConsoleBuffer As String
-' Tracks whether the console form is open
-Public mConsoleOpen As Boolean
 
 '------------------------------------------------------------------------------
 ' gCPU
@@ -3091,80 +3527,6 @@ End Property
 Public Sub ResetDecCPU()
     Set pCPU = Nothing
 End Sub
-
-Public Sub InitHexTable()
-    Dim i As Long ' Use Long to avoid overflow during loop
-    For i = 0 To 255
-        ' IMPORTANT: Use the built-in Hex$ function here, NOT FastHex
-        HexTable(i) = Right$("0" & hex$(i), 2)
-    Next i
-    mIHexIintialized = True
-End Sub
-Public Function FastHex(ByVal value As Long) As String
-    If Not mIHexIintialized Then InitHexTable
-    
-    ' Handle values as 16-bit if they exceed 255
-    ' This covers PC, SP, and address operands automatically
-    If value > 255 Then
-        FastHex = HexTable(value \ 256) & HexTable(value Mod 256)
-    ElseIf value < 0 Then
-        ' Handle potential negative overflows if any
-        FastHex = "0000"
-    Else
-        ' Standard 8-bit register (A, B, C, etc.)
-        FastHex = HexTable(value)
-    End If
-End Function
-
-'------------------------------------------------------------------------------
-' Console utilities (modeless)
-'------------------------------------------------------------------------------
-Public Sub ConsolePrint(ByVal text As String, _
-                        Optional ByVal crlf As Boolean = True, _
-                        Optional ByVal prtSpace As Boolean = False)
-    ' 1) Always update the authoritative buffer synchronously
-    ConsoleBuffer_Append text, crlf, prtSpace
-
-    ' 2) Optionally update the UI (unchanged behavior)
-    'If Not mConsoleOpen Then ShowConsole
-    If crlf Then
-        usrForm.ConPrtLn text, prtSpace
-    Else
-        usrForm.ConPrt text, prtSpace
-    End If
-End Sub
-
-Public Sub ClearConsole()
-    usrForm.ClearConsole
-End Sub
-
-Public Sub ShowConsole()
-    usrForm.Show vbModeless
-    mConsoleOpen = True
-End Sub
-
-Public Sub ConsoleBuffer_Clear()
-    gConsoleBuffer = vbNullString
-End Sub
-
-Public Sub ConsoleBuffer_Append(ByVal s As String, Optional ByVal addCrlf As Boolean = False, Optional ByVal addLeadingSpace As Boolean = False)
-    If addLeadingSpace And Len(gConsoleBuffer) > 0 Then gConsoleBuffer = gConsoleBuffer & " "
-    gConsoleBuffer = gConsoleBuffer & s
-    If addCrlf Then gConsoleBuffer = gConsoleBuffer & vbCrLf
-End Sub
-
-Public Function ConsoleBuffer_Text() As String
-    ConsoleBuffer_Text = gConsoleBuffer
-End Function
-
-Public Sub SelectEngine()
-    decExecute
-End Sub
-
-'================================================================================
-' Module:       modGlobals
-'================================================================================
-
 
 ''' Component: clsDecRegisterState
 Option Explicit
@@ -3297,6 +3659,184 @@ End Property
 
 
 
+''' Component: tstCPU
+Public Sub tstExecute()
+    Dim pc_dec As Long
+    Dim opcode As String
+    Dim op1 As String, op2 As String
+    Dim ofs_opcode As Long, ofs_op1 As Long, ofs_op2 As Long, ofs_rowstat As Long
+    Dim Reset As Long, errcode As Long
+    Dim rowStat As String
+    Dim memStart As Long, memSize As Long, memEnd As Long
+    Dim myCpu As clsCPU
+    Dim headless As Boolean
+    Dim prevCalc As XlCalculation
+
+    ' ========= Initialization =========
+    InitHexTable
+    pc_dec = Range("Start_PC").value
+    Range("pc").value = FastHex(pc_dec)
+    ofs_opcode = Range("ofs_opcode").value
+    ofs_op1 = Range("ofs_op1").value
+    ofs_op2 = Range("ofs_op2").value
+    ofs_rowstat = Range("ofs_rowstat").value
+    ofs_rowstat = Range("label").value
+
+    errcode = 0
+    Range("Error").value = 0
+    Range("errMessage").value = ""
+
+    memStart = HexToDec(Range("MemStart").value)
+    memSize = HexToDec(Range("MemSize").value)
+    memEnd = memStart + memSize
+
+    Set myCpu = New clsDecCPU
+
+    ' Fresh run
+    mConsoleOpen = False
+    ResetRegisters
+
+    pc_dec = 0
+    myCpu.SetPC (Range("Line0").value)
+    myCpu.Reg("SP") = hex(memEnd)
+    Range("StackStart").value = myCpu.Reg("SP")
+
+    Range("Mem").ClearContents
+    Range("StackDetails").ClearContents
+    Range("consoleOut").value = ""
+
+    myCpu.ShowFlags
+
+    ' ========= Headless toggle =========
+    headless = (Range("Step").value = 0)
+    If headless Then
+        myCpu.BeginDeferUI
+        Application.ScreenUpdating = False
+        Application.EnableEvents = False
+        prevCalc = Application.Calculation
+        Application.Calculation = xlCalculationManual
+    End If
+
+    ' ========= Selection-free main loop with bulk reads =========
+    Dim base As Range, line0Dec As Long
+    Set base = Range("Line0")
+    line0Dec = CLng(base.value) ' Dec Line at Line0 (baseline)
+
+    ' Number of rows to preload (MemStart..MemEnd)
+    Dim countRows As Long
+    countRows = (memEnd - memStart) + 1
+    If countRows < 1 Then countRows = 1
+
+    ' Load ONLY the columns we need into arrays
+    Dim arrOpcode As Variant, arrRowStat As Variant
+    Dim arrOp1 As Variant, arrOp2 As Variant
+
+    arrOpcode = base.Offset(0, ofs_opcode).Resize(countRows, 1).value
+    arrRowStat = base.Offset(0, ofs_rowstat).Resize(countRows, 1).value
+    arrOp1 = base.Offset(0, ofs_op1).Resize(countRows, 1).value
+    arrOp2 = base.Offset(0, ofs_op2).Resize(countRows, 1).value
+
+    Dim ubRows_Opcode As Long, ubRows_RowStat As Long
+    ubRows_Opcode = UBound(arrOpcode, 1)
+    ubRows_RowStat = UBound(arrRowStat, 1)
+
+    ' Optional one-time normalization for the hot loop
+    Const NormalizeInputs As Boolean = True
+    If NormalizeInputs Then
+        Dim idxN As Long
+        For idxN = 1 To countRows
+            If Not IsEmpty(arrOpcode(idxN, 1)) Then arrOpcode(idxN, 1) = Trim$(UCase$(CStr(arrOpcode(idxN, 1))))
+            If Not IsEmpty(arrRowStat(idxN, 1)) Then arrRowStat(idxN, 1) = Trim$(UCase$(CStr(arrRowStat(idxN, 1))))
+            If Not IsEmpty(arrOp1(idxN, 1)) Then arrOp1(idxN, 1) = Trim$(UCase$(CStr(arrOp1(idxN, 1))))
+            If Not IsEmpty(arrOp2(idxN, 1)) Then arrOp2(idxN, 1) = Trim$(UCase$(CStr(arrOp2(idxN, 1))))
+        Next idxN
+    End If
+
+    ' Compute starting row index from pc_dec (hex text in clsCPU)
+    Dim pcDec As Long, rowIdx As Long
+    pcDec = CLng(HexToDec(CStr(myCpu.Reg("pc_dec"))))
+    rowIdx = pcDec - line0Dec
+
+    ' Bounds before first read
+    If rowIdx < 0 Or rowIdx >= ubRows_Opcode Then
+        errcode = -200  ' END-like termination
+        GoTo ExecFinalize
+    End If
+
+    ' First opcode from array
+    opcode = CStr(arrOpcode(rowIdx + 1, 1))
+
+    ' Prepare Range row for EQU label resolution
+    Dim curRow As Range
+    Set curRow = base.Offset(rowIdx, 0)
+
+    ' ---- Throttle state (baseline 250ms) ----
+    Dim instrCount As Long: instrCount = 0
+    Dim nextPaint As Double: nextPaint = Timer + 0.25
+    If headless Then DoEvents
+
+    Do While errcode = 0 And pcDec <= memEnd
+        ' Read operands / row status from arrays
+        op1 = CStr(arrOp1(rowIdx + 1, 1))
+        op2 = CStr(arrOp2(rowIdx + 1, 1))
+
+        If rowIdx >= 0 And rowIdx < ubRows_RowStat Then
+            rowStat = CStr(arrRowStat(rowIdx + 1, 1))
+        Else
+            rowStat = Trim$(UCase$(CStr(curRow.Offset(0, ofs_rowstat).value)))
+        End If
+
+        ' Skip compiled rows (RowStat="C") and blanks
+        If rowStat <> "C" And opcode <> "" Then
+            errcode = RunOpcode(myCpu, opcode, op1, op2, curRow)
+            If errcode <> 0 Then
+                ' -9999 = Invalid opcode (consistent with clsCPU errors)
+                If errcode = -9999 Then
+                    Range("Error").value = errcode
+                    Range("errMessage").value = "Error: Invalid OpCode: " & opcode & " at Line " & pcDec
+                End If
+            End If
+        End If
+
+        ' Throttled repaint during headless runs (console progress)
+        instrCount = instrCount + 1
+        If headless Then
+            If Timer >= nextPaint Then
+                DoEvents
+                nextPaint = Timer + 0.25
+            End If
+        End If
+
+        ' Advance pc_dec and compute next row
+        pcDec = myCpu.IncPC()
+        rowIdx = pcDec - line0Dec
+        If rowIdx < 0 Or rowIdx >= ubRows_Opcode Then Exit Do
+
+        ' Next opcode from array
+        opcode = CStr(arrOpcode(rowIdx + 1, 1))
+
+        ' Keep Range row current for EQU
+        Set curRow = base.Offset(rowIdx, 0)
+        ' (RowStat fetched at top of next iteration)
+    Loop
+
+ExecFinalize:
+    ' ========= Finalization =========
+    If headless Then
+        myCpu.EndDeferUI
+        Application.Calculation = prevCalc
+        Application.EnableEvents = True
+        Application.ScreenUpdating = True
+        Application.StatusBar = False
+        Range("consoleText") = usrForm.tbConsole.value
+    End If
+
+    If Range("Error").value = 0 Or Range("Error").value = -200 Then
+        Range("errMessage") = "Execution Complete"
+    End If
+End Sub
+
+
 ''' Component: decAssemble
 Option Explicit
 '================================================================================
@@ -3311,6 +3851,8 @@ Option Explicit
 ' Source:       Stable snapshot (2026-02-12 18:38)  ? Export reference.
 '================================================================================
 
+' Tracks whether the console form is open
+Private mConsoleOpen As Boolean
 
 '------------------------------------------------------------------------------
 ' Execute
@@ -3344,7 +3886,6 @@ Public Sub decExecute()
     ofs_op1 = Range("ofs_op1").value
     ofs_op2 = Range("ofs_op2").value
     ofs_rowstat = Range("ofs_rowstat").value
-    ofs_label = Range("ofs_label").value
     debugMode = Range("Debug").value = 1
 
     Reset = Range("Reset").value
@@ -3448,7 +3989,7 @@ Public Sub decExecute()
     ' ---- Throttle state (baseline 250ms) ----
     Dim instrCount As Long: instrCount = 0
     Dim nextPaint As Double: nextPaint = Timer + 0.25
-    'If headless Then DoEvents
+    If headless Then DoEvents
 
     Do While errcode = 0 And pc_dec <= memEnd
         ' Read operands / row status from arrays
@@ -3488,7 +4029,7 @@ Public Sub decExecute()
         instrCount = instrCount + 1
         If headless Then
             If Timer >= nextPaint Then
-                'DoEvents
+                DoEvents
                 nextPaint = Timer + 0.25
             End If
         End If
@@ -3567,12 +4108,12 @@ End Function
 ' HEX2ASCII
 ' Returns '.' for non-printables and '?' for invalid hex.
 '------------------------------------------------------------------------------
-Public Function HEX2ASCII(ByVal hexRange As Variant) As String
+Public Function xHEX2ASCII(ByVal hexRange As Variant) As String
     Dim hexVal As String
-    Dim decVal As Integer
+    Dim decVal As Long
 
     If IsEmpty(hexRange) Or hexRange = "" Then
-        HEX2ASCII = ""
+        xHEX2ASCII = ""
         Exit Function
     End If
 
@@ -3580,15 +4121,15 @@ Public Function HEX2ASCII(ByVal hexRange As Variant) As String
     On Error Resume Next
     decVal = Application.WorksheetFunction.Hex2Dec(hexVal)
     If Err.Number <> 0 Then
-        HEX2ASCII = "?"
+        xHEX2ASCII = "?"
         Exit Function
     End If
     On Error GoTo 0
 
     If decVal >= 32 And decVal <= 126 Then
-        HEX2ASCII = Chr(decVal)
+        xHEX2ASCII = Chr(decVal)
     Else
-        HEX2ASCII = "."
+        xHEX2ASCII = "."
     End If
 End Function
 
@@ -3596,22 +4137,37 @@ End Function
 ' HexToDec
 ' Safe hex string -> long (uses &H prefix trick)
 '------------------------------------------------------------------------------
-Public Function HexToDec(ByVal op1 As String) As Long
-    HexToDec = Val("&H" & op1)
+Public Function xHexToDec(ByVal op1 As String) As Long
+    xHexToDec = Val("&H" & op1)
 End Function
 
+'------------------------------------------------------------------------------
+' Console utilities (modeless)
+'------------------------------------------------------------------------------
+Public Sub decConsolePrint(ByVal text As String, _
+                        Optional ByVal crlf As Boolean = True, _
+                        Optional ByVal prtSpace As Boolean = False)
+    ' 1) Always update the authoritative buffer synchronously
+    ConsoleBuffer_Append text, crlf, prtSpace
 
-'------------------------------------------------------------------------------
-' ResetRegisters
-' Clears sheet register display cells (not CPU object) for A..L, PC, SP view.
-'------------------------------------------------------------------------------
-Public Sub ResetRegisters()
-    Dim i As Integer
-    For i = 0 To 8
-        Range("Registers").Offset(i, 2).value = 0
-    Next i
+    ' 2) Optionally update the UI (unchanged behavior)
+    'If Not mConsoleOpen Then ShowConsole
+    If crlf Then
+        usrForm.ConPrtLn text, prtSpace
+    Else
+        usrForm.ConPrt text, prtSpace
+    End If
 End Sub
 
+
+Public Sub decClearConsole()
+    usrForm.ClearConsole
+End Sub
+
+Public Sub decShowConsole()
+    usrForm.Show vbModeless
+    mConsoleOpen = True
+End Sub
 
 '================================================================================
 ' Module:       decAssemble
