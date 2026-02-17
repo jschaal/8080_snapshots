@@ -1,5 +1,5 @@
 === VBA EXPORT: 8080 Model Dec.xlsm ===
-Timestamp: 2/16/2026 7:16:44 PM
+Timestamp: 2/16/2026 3:01:25 PM
 ================================================================================
 
 ''' Component: ThisWorkbook
@@ -135,13 +135,13 @@ Public Sub ParseLabels()
             End Select
 
             ' Always add by label name (including EQU)
-            If Not pLabels.exists(labelName) Then
+            If Not pLabels.Exists(labelName) Then
                 pLabels.add labelName, labelRec
             End If
 
             ' Only add address xref for addressable rows (A, D)
             If (labelRec.clsLabelType = "A" Or labelRec.clsLabelType = "D") Then
-                If Not pLabelXrefs.exists(addrHex) Then
+                If Not pLabelXrefs.Exists(addrHex) Then
                     pLabelXrefs.add addrHex, labelRec
                 End If
             End If
@@ -157,7 +157,7 @@ End Sub
 ' Returns the label record if found, else Nothing.
 '------------------------------------------------------------------------------
 Public Function GetLabel(ByVal labelName As String) As clsLabelRecord
-    If pLabels.exists(labelName) Then
+    If pLabels.Exists(labelName) Then
         Set GetLabel = pLabels(labelName)
     Else
         Set GetLabel = Nothing
@@ -185,7 +185,7 @@ Public Function AddLabel(ByVal labelName As String, ByVal LabelType As String, B
             labelRec.clsSize = 16
         End If
 
-        If Not pLabels.exists(labelName) And Not pLabelXrefs.exists(AddressHex) Then
+        If Not pLabels.Exists(labelName) Then
             pLabels.add labelName, labelRec
             pLabelXrefs.add AddressHex, labelRec ' also allow lookup by address hex
         End If
@@ -201,7 +201,7 @@ End Function
 ' Returns decimal address for a label or -1 if not found.
 '------------------------------------------------------------------------------
 Public Function GetAddress(ByVal labelName As String) As Long
-    If pLabels.exists(labelName) Then
+    If pLabels.Exists(labelName) Then
         GetAddress = pLabels(labelName).clsAddress
     Else
         GetAddress = -1
@@ -213,7 +213,7 @@ End Function
 ' Finds a label by its hex address string (e.g., "0108").
 '------------------------------------------------------------------------------
 Public Function GetByXref(ByVal address As String) As clsLabelRecord
-    If pLabelXrefs.exists(address) Then
+    If pLabelXrefs.Exists(address) Then
         Set GetByXref = pLabelXrefs(address)
     Else
         Set GetByXref = Nothing
@@ -243,7 +243,7 @@ Public Sub ParseProcedures()
         If labelName <> "" Then
             Set labelRec = New clsLabelRecord
             labelRec.clsLabelType = "P" ' procedure marker
-            If Not pProcedures.exists(labelName) Then
+            If Not pProcedures.Exists(labelName) Then
                 pProcedures.add labelName, labelRec
             End If
         End If
@@ -255,7 +255,7 @@ End Sub
 ' Returns True if the name is a registered procedure (CALL shim).
 '------------------------------------------------------------------------------
 Public Function IsProc(ByVal labelName As String) As Boolean
-    IsProc = pProcedures.exists(labelName)
+    IsProc = pProcedures.Exists(labelName)
 End Function
 '================================================================================
 ' Class:        clsLabels
@@ -311,9 +311,6 @@ Public Sub RunDynamicTests()
     Dim t As Variant
     Dim resultsCol As Long, runCol As Long
     Dim useDec As Boolean
-    Dim overrideStepMode As Boolean
-    Dim overrideReset As Boolean
-    Dim restCPU As Boolean
 
     Set wsTest = Sheets("Unit Tests")
     Set wsEMU = Sheets("CPU")
@@ -326,16 +323,6 @@ Public Sub RunDynamicTests()
     ofs_label = wsEMU.Range("ofs_label").value
     endCol = wsEMU.Range("ofs_mem").value
     colWidth = (endCol - startCol) + 1
-    
-'  turn off step mode and force reset for testrunner
-    overrideStepMode = Range("Step") = 1
-    If overrideStepMode Then
-        Range("Step") = 0
-    End If
-    overrideReset = Range("Reset") = 0
-    If overrideReset Then
-        Range("Reset") = 1
-    End If
 
     ' Honor your Run flag column again
     runCol = wsTest.Range("RunTest").Column
@@ -421,14 +408,6 @@ Public Sub RunDynamicTests()
     Application.StatusBar = False
     ConsolePrint "", True
     Range("consoleText") = usrForm.tbConsole.value
-
-'  set step and reset mode to original selectsions
-    If overrideStepMode Then
-        Range("Step") = 1
-    End If
-    If overrideReset Then
-        Range("Reset") = 0
-    End If
 
     Dim finalMsg As String
     If batchPassed Then
@@ -1072,7 +1051,7 @@ Public Function add(ByVal op1 As String) As Long
     Dim ac As Long
 
     If op1 = "" Then SetError errorBase, "ADD: Missing Operand": add = errorBase: Exit Function
-    If Not pRegs.exists(op1) Then SetError errorBase + 1, "ADD: Invalid Register: " & op1: add = errorBase + 1: Exit Function
+    If Not pRegs.Exists(op1) Then SetError errorBase + 1, "ADD: Invalid Register: " & op1: add = errorBase + 1: Exit Function
 
     dec_a = pRegs("A") And 255
     dec_op = HexToDec(pRegs(op1)) And 255
@@ -1136,7 +1115,7 @@ Public Function ANA(ByVal op1 As String) As Long
     Dim dec_a As Long, dec_op As Long, result As Long
 
     If op1 = "" Then SetError errorBase, "ANA: Missing Operand": ANA = errorBase: Exit Function
-    If Not pRegs.exists(op1) Then SetError errorBase + 1, "ANA: Invalid Register: " & op1: ANA = errorBase + 1: Exit Function
+    If Not pRegs.Exists(op1) Then SetError errorBase + 1, "ANA: Invalid Register: " & op1: ANA = errorBase + 1: Exit Function
 
     dec_a = pRegs("A") And 255
     dec_op = pRegs(op1) And 255
@@ -1191,7 +1170,7 @@ Public Function CMP(ByVal op1 As String) As Long
     Dim borrow As Long, acBorrow As Long, result As Long
 
     If op1 = "" Then SetError errorBase, "CMP: Missing Operand": CMP = errorBase: Exit Function
-    If Not pRegs.exists(op1) Then SetError errorBase + 1, "CMP: Invalid Register: " & op1: CMP = errorBase + 1: Exit Function
+    If Not pRegs.Exists(op1) Then SetError errorBase + 1, "CMP: Invalid Register: " & op1: CMP = errorBase + 1: Exit Function
 
     dec_a = pRegs("A") And 255
     dec_op = HexToDec(pRegs(op1)) And 255
@@ -1315,7 +1294,7 @@ Public Function DCR(ByVal op1 As String) As Long
     Dim result As Long, current As Long, ac As Long
 
     If op1 = "" Then SetError errorBase, "DCR: Missing Operands: " & op1: DCR = errorBase: Exit Function
-    If Not pRegs.exists(op1) Then SetError errorBase + 1, "DCR: Invalid Register: " & op1: DCR = errorBase + 1: Exit Function
+    If Not pRegs.Exists(op1) Then SetError errorBase + 1, "DCR: Invalid Register: " & op1: DCR = errorBase + 1: Exit Function
 
     current = pRegs(op1)
     result = (current - 1) And 255
@@ -1377,7 +1356,7 @@ Public Function INR(ByVal op1 As String) As Long
     Dim result As Long, current As Long, nibble As Long, ac As Long
 
     If op1 = "" Then SetError errorBase, "INR: Missing Operands: " & op1: INR = errorBase: Exit Function
-    If Not pRegs.exists(op1) Then SetError errorBase + 1, "INR: Invalid Register: " & op1: INR = errorBase + 1: Exit Function
+    If Not pRegs.Exists(op1) Then SetError errorBase + 1, "INR: Invalid Register: " & op1: INR = errorBase + 1: Exit Function
 
     current = pRegs(op1)
     result = (current + 1) And 255
@@ -1545,7 +1524,7 @@ Public Function MOV(ByVal op1 As String, ByVal op2 As String) As Long
     Dim errorBase As Long: errorBase = 350
     If op1 = "" Or op2 = "" Then SetError errorBase, "MOV: Missing Operands: " & op1 & " " & op2: MOV = errorBase: Exit Function
 
-    If pRegs.exists(op1) And pRegs.exists(op2) Then
+    If pRegs.Exists(op1) And pRegs.Exists(op2) Then
         SetReg op1, pRegs(op2)
     Else
         SetError errorBase + 1, "MOV: Invalid Registers: " & op1 & " " & op2: MOV = errorBase + 1: Exit Function
@@ -1570,7 +1549,7 @@ Public Function MVI(ByVal op1 As String, ByVal op2 As String) As Long
     If Not labelRecord Is Nothing Then op2 = labelRecord.clsAddressHex
 
     If Not IsValidHex(op2) Then SetError errorBase + 1, "MVI: Invalid Hex Value: " & op2: MVI = errorBase + 1: Exit Function
-    If pRegs.exists(op1) Then
+    If pRegs.Exists(op1) Then
         SetReg op1, HexToDec(op2)
     Else
         SetError errorBase + 2, "MVI: Invalid Register: " & op1: MVI = errorBase + 2: Exit Function
@@ -1825,7 +1804,7 @@ Public Function ADC(ByVal op1 As String) As Long
     Dim ac As Long
 
     If op1 = "" Then SetError errorBase, "ADC: Missing Operand": ADC = errorBase: Exit Function
-    If Not pRegs.exists(op1) Then SetError errorBase + 1, "ADC: Invalid Register: " & op1: ADC = errorBase + 1: Exit Function
+    If Not pRegs.Exists(op1) Then SetError errorBase + 1, "ADC: Invalid Register: " & op1: ADC = errorBase + 1: Exit Function
 
     a = pRegs("A") And 255
     b = pRegs(op1) And 255
@@ -1887,6 +1866,11 @@ Public Function ACI(ByVal op1 As String) As Long
     SetParity result
     ACI = 0
 End Function
+
+'------------------------------------------------------------------------------
+'                         TBD
+'------------------------------------------------------------------------------
+
 ' --- SUB r (A = A - r) ; CY=1 on borrow ---
 Public Function SUB_(ByVal op1 As String) As Long
     Dim errorBase As Long: errorBase = 580
@@ -1894,7 +1878,7 @@ Public Function SUB_(ByVal op1 As String) As Long
     Dim borrow As Long, acBorrow As Long
 
     If op1 = "" Then SetError errorBase, "SUB: Missing Operand": SUB_ = errorBase: Exit Function
-    If Not pRegs.exists(op1) Then SetError errorBase + 1, "SUB: Invalid Register: " & op1: SUB_ = errorBase + 1: Exit Function
+    If Not pRegs.Exists(op1) Then SetError errorBase + 1, "SUB: Invalid Register: " & op1: SUB_ = errorBase + 1: Exit Function
 
     a = pRegs("A") And 255
     b = pRegs(op1) And 255
@@ -1966,7 +1950,7 @@ Public Function SBB(ByVal op1 As String) As Long
     Dim borrow As Long, acBorrow As Long
 
     If op1 = "" Then SetError errorBase, "SBB: Missing Operand": SBB = errorBase: Exit Function
-    If Not pRegs.exists(op1) Then SetError errorBase + 1, "SBB: Invalid Register: " & op1: SBB = errorBase + 1: Exit Function
+    If Not pRegs.Exists(op1) Then SetError errorBase + 1, "SBB: Invalid Register: " & op1: SBB = errorBase + 1: Exit Function
 
     a = pRegs("A") And 255
     b = pRegs(op1) And 255
@@ -1986,11 +1970,6 @@ Public Function SBB(ByVal op1 As String) As Long
     SetSign result: SetZero result: SetParity result
     SBB = 0
 End Function
-
-'------------------------------------------------------------------------------
-'                         TBD
-'------------------------------------------------------------------------------
-
 
 ' --- SBI data (A = A - imm - CY) ; CY=1 on borrow ---
 Public Function SBI(ByVal op1 As String) As Long
@@ -2025,7 +2004,7 @@ Public Function XRA(ByVal op1 As String) As Long
     Dim a As Long, b As Long, result As Long
 
     If op1 = "" Then SetError errorBase, "XRA: Missing Operand": XRA = errorBase: Exit Function
-    If Not pRegs.exists(op1) Then SetError errorBase + 1, "XRA: Invalid Register: " & op1: XRA = errorBase + 1: Exit Function
+    If Not pRegs.Exists(op1) Then SetError errorBase + 1, "XRA: Invalid Register: " & op1: XRA = errorBase + 1: Exit Function
 
     a = pRegs("A") And 255
     b = pRegs(op1) And 255
@@ -2299,17 +2278,17 @@ End Sub
 '==============================================================================
 
 Public Property Get Reg(ByVal name As String) As Variant
-    If pRegs.exists(name) Then Reg = pRegs(name) Else Reg = 0
+    If pRegs.Exists(name) Then Reg = pRegs(name) Else Reg = 0
 End Property
 
 Public Property Let Reg(ByVal name As String, ByVal value As Variant)
-    If pRegs.exists(name) Then pRegs(name) = value
+    If pRegs.Exists(name) Then pRegs(name) = value
 End Property
 Public Property Get Registers() As Variant
     Registers = pRegs.Keys
 End Property
 Public Property Get Flag(ByVal name As String) As Long
-    If pFlags.exists(name) Then Flag = pFlags(name) Else Flag = 0
+    If pFlags.Exists(name) Then Flag = pFlags(name) Else Flag = 0
 End Property
 Public Property Get Flags() As Variant
     Flags = pFlags.Keys
@@ -2761,33 +2740,15 @@ Option Explicit
 ' Source:       Stable snapshot (2026-02-12 18:38)  ? Export reference.
 '================================================================================
 
-' ----------------------------------------------------------------------
-' Cached, normalized program arrays (rebuilt only on Reset=1 or invalidated)
-' ----------------------------------------------------------------------
-Private gCacheValid As Boolean
-Private gCacheLine0Dec As Long
-Private gCacheCountRows As Long
-Private gCacheMemStart As Long
-Private gCacheMemEnd As Long
-Private gCacheOfsOpcode As Long, gCacheOfsOp1 As Long, gCacheOfsOp2 As Long, gCacheOfsRowStat As Long, gCacheOfsLabel As Long
 
-Private gArrOpcode As Variant
-Private gArrRowStat As Variant
-Private gArrOp1 As Variant
-Private gArrOp2 As Variant
-Private gArrLabel As Variant
-
-Private Sub InvalidateCodeCache()
-    gCacheValid = False
-End Sub
 '------------------------------------------------------------------------------
 ' Execute
-' Entry point for a run. Honours "reset" and "Step" (headless) flags on the CPU
+' Entry point for a run. Honours "Reset" and "Step" (headless) flags on the CPU
 ' sheet. Bulk-reads instruction columns to arrays for performance. Routes each
 ' opcode to RunOpcode (which dispatches into clsCPU).
 '
 ' Sheet bindings (named ranges expected on "CPU"):
-'   Start_pc_dec, pc_dec, reset, Error, errMessage
+'   Start_pc_dec, pc_dec, Reset, Error, errMessage
 '   MemStart, MemSize, MemEnd
 '   ofs_opcode, ofs_op1, ofs_op2, ofs_rowstat, ofs_label
 '   Line0_dec (decimal first row of memory/instruction grid), StackStart, StackDetails,
@@ -2806,36 +2767,19 @@ Public Sub decExecute()
     Dim prevCalc As XlCalculation
     Dim debugMode As Boolean
     Dim stepMode As Boolean
-    Dim stepTaken As Boolean
-    Dim executedThisIter As Boolean
-    Dim endedByEnd As Boolean
-
-    ' --- Cached arrays mapped into locals for the run ---
-    Dim base As Range, line0_dec As Long
-    Dim countRows As Long
-    Dim arrOpcode As Variant, arrRowStat As Variant, arrOp1 As Variant, arrOp2 As Variant, arrLabel As Variant
-    Dim ubRows_Opcode As Long, ubRows_RowStat As Long
-    Dim rowIdx As Long
-    Dim curRow As Range
 
     ' ========= Initialization =========
-    InitHexTable                                              ' existing utility [1](https://florida1-my.sharepoint.com/personal/jschaal_fifco_com/Documents/Microsoft%20Copilot%20Chat%20Files/8080%20Model%20Dec_2026-02-16_1524.txt)
-
+    InitHexTable
     ofs_opcode = Range("ofs_opcode").value
     ofs_op1 = Range("ofs_op1").value
     ofs_op2 = Range("ofs_op2").value
     ofs_rowstat = Range("ofs_rowstat").value
     ofs_label = Range("ofs_label").value
+    debugMode = Range("Debug").value = 1
+    stepMode = Range("Step").value = 1
 
-    debugMode = (Range("Debug").value = 1)
-    stepMode = (Range("Step").value = 1)
     Reset = Range("Reset").value
-
     errcode = 0
-    endedByEnd = False
-    stepTaken = False
-
-    ' Clear sheet error/message each call (keeps step UI clean)
     Range("Error").value = 0
     Range("errMessage").value = ""
 
@@ -2843,31 +2787,33 @@ Public Sub decExecute()
     memSize = HexToDec(Range("MemSize").value)
     memEnd = memStart + memSize
 
-    Set myCpu = gDecCPU                                         ' persistent CPU instance [1](https://florida1-my.sharepoint.com/personal/jschaal_fifco_com/Documents/Microsoft%20Copilot%20Chat%20Files/8080%20Model%20Dec_2026-02-16_1524.txt)
+    Set myCpu = gDecCPU
 
-    ' ========= Reset / continuation =========
-    If Reset = 1 Then
-        ' Fresh run / Step Start: reset CPU and rebuild cache
+    If Reset = 0 Then
+        ' Continue run: rehydrate CPU state from sheet
+        myCpu.Reg("pc") = pc_dec
+        myCpu.LDARegs
+        myCpu.SetPC pc_dec
+        myCpu.Reg("SP") = HexToDec(Range("SP").value)
+    Else
+        ' Fresh run
         ResetDecCPU
         Set myCpu = gDecCPU
-        InvalidateCodeCache
-
         mConsoleOpen = False
+
         pc_dec = CLng(Range("Line0_dec").value)
         myCpu.SetPC pc_dec
         myCpu.Reg("SP") = memEnd
-
         Range("StackStart").value = FastHex(myCpu.Reg("SP"))
+
         Range("Mem").ClearContents
         Range("StackDetails").ClearContents
         Range("consoleOut").value = ""
-    Else
-        ' Continue run / Step: pull PC from persistent CPU object
-        pc_dec = CLng(myCpu.Reg("PC"))
+
     End If
 
     ' ========= Headless toggle =========
-    headless = Not stepMode                                      ' stepMode implies interactive paints [1](https://florida1-my.sharepoint.com/personal/jschaal_fifco_com/Documents/Microsoft%20Copilot%20Chat%20Files/8080%20Model%20Dec_2026-02-16_1524.txt)
+    headless = (Range("Step").value = 0)
     If headless Then
         Application.ScreenUpdating = False
         Application.EnableEvents = False
@@ -2875,83 +2821,74 @@ Public Sub decExecute()
         Application.Calculation = xlCalculationManual
     End If
 
-    ' ========= Build/refresh cached arrays ONLY when needed =========
+    ' ========= Selection-free main loop with bulk reads =========
+    Dim base As Range, line0_dec As Long
     Set base = Range("Line0_dec")
-    line0_dec = CLng(base.value)
+    line0_dec = CLng(base.value) ' Dec Line at Line0 (baseline)
 
+    ' Number of rows to preload (MemStart..MemEnd)
+    Dim countRows As Long
     countRows = (memEnd - memStart) + 1
     If countRows < 1 Then countRows = 1
 
-    ' Rebuild cache only when Reset=1 or cache invalid or layout changed
-    If (Not gCacheValid) _
-       Or (gCacheCountRows <> countRows) _
-       Or (gCacheLine0Dec <> line0_dec) _
-       Or (gCacheMemStart <> memStart) _
-       Or (gCacheMemEnd <> memEnd) _
-       Or (gCacheOfsOpcode <> ofs_opcode) _
-       Or (gCacheOfsOp1 <> ofs_op1) _
-       Or (gCacheOfsOp2 <> ofs_op2) _
-       Or (gCacheOfsRowStat <> ofs_rowstat) _
-       Or (gCacheOfsLabel <> ofs_label) Then
+    ' Load ONLY the columns we need into arrays
+    Dim arrOpcode As Variant, arrRowStat As Variant
+    Dim arrOp1 As Variant, arrOp2 As Variant, arrLabel As Variant
 
-        gCacheLine0Dec = line0_dec
-        gCacheCountRows = countRows
-        gCacheMemStart = memStart
-        gCacheMemEnd = memEnd
-        gCacheOfsOpcode = ofs_opcode
-        gCacheOfsOp1 = ofs_op1
-        gCacheOfsOp2 = ofs_op2
-        gCacheOfsRowStat = ofs_rowstat
-        gCacheOfsLabel = ofs_label
+    arrOpcode = base.Offset(0, ofs_opcode).Resize(countRows, 1).value
+    arrRowStat = base.Offset(0, ofs_rowstat).Resize(countRows, 1).value
+    arrOp1 = base.Offset(0, ofs_op1).Resize(countRows, 1).value
+    arrOp2 = base.Offset(0, ofs_op2).Resize(countRows, 1).value
+    arrLabel = base.Offset(0, ofs_label).Resize(countRows, 1).value
 
-        gArrOpcode = base.Offset(0, ofs_opcode).Resize(countRows, 1).value
-        gArrRowStat = base.Offset(0, ofs_rowstat).Resize(countRows, 1).value
-        gArrOp1 = base.Offset(0, ofs_op1).Resize(countRows, 1).value
-        gArrOp2 = base.Offset(0, ofs_op2).Resize(countRows, 1).value
-        gArrLabel = base.Offset(0, ofs_label).Resize(countRows, 1).value
-
-        ' Normalize once (same intent as your existing loop) [1](https://florida1-my.sharepoint.com/personal/jschaal_fifco_com/Documents/Microsoft%20Copilot%20Chat%20Files/8080%20Model%20Dec_2026-02-16_1524.txt)
-        Dim idxN As Long
-        For idxN = 1 To countRows
-            If Not IsEmpty(gArrOpcode(idxN, 1)) Then gArrOpcode(idxN, 1) = Trim$(UCase$(CStr(gArrOpcode(idxN, 1))))
-            If Not IsEmpty(gArrRowStat(idxN, 1)) Then gArrRowStat(idxN, 1) = Trim$(UCase$(CStr(gArrRowStat(idxN, 1))))
-            If Not IsEmpty(gArrOp1(idxN, 1)) Then gArrOp1(idxN, 1) = Trim$(UCase$(CStr(gArrOp1(idxN, 1))))
-            If Not IsEmpty(gArrOp2(idxN, 1)) Then gArrOp2(idxN, 1) = Trim$(CStr(gArrOp2(idxN, 1))) ' preserve string case for literals
-            If Not IsEmpty(gArrLabel(idxN, 1)) Then gArrLabel(idxN, 1) = Trim$(UCase$(CStr(gArrLabel(idxN, 1))))
-        Next idxN
-
-        gCacheValid = True
-    End If
-
-    ' Use cached arrays for execution
-    arrOpcode = gArrOpcode
-    arrRowStat = gArrRowStat
-    arrOp1 = gArrOp1
-    arrOp2 = gArrOp2
-    arrLabel = gArrLabel
-
+    Dim ubRows_Opcode As Long, ubRows_RowStat As Long
     ubRows_Opcode = UBound(arrOpcode, 1)
     ubRows_RowStat = UBound(arrRowStat, 1)
 
-    ' ========= Establish starting row index =========
+    ' Optional one-time normalization for the hot loop.  all input trimed and set to 0 except for op2 since this can contain a string
+    Const NormalizeInputs As Boolean = True
+    If NormalizeInputs Then
+        Dim idxN As Long
+        For idxN = 1 To countRows
+            If Not IsEmpty(arrOpcode(idxN, 1)) Then arrOpcode(idxN, 1) = Trim$(UCase$(CStr(arrOpcode(idxN, 1))))
+            If Not IsEmpty(arrRowStat(idxN, 1)) Then arrRowStat(idxN, 1) = Trim$(UCase$(CStr(arrRowStat(idxN, 1))))
+            If Not IsEmpty(arrOp1(idxN, 1)) Then arrOp1(idxN, 1) = Trim$(UCase$(CStr(arrOp1(idxN, 1))))
+            If Not IsEmpty(arrOp2(idxN, 1)) Then arrOp2(idxN, 1) = Trim$(CStr(arrOp2(idxN, 1)))
+            If Not IsEmpty(arrLabel(idxN, 1)) Then arrLabel(idxN, 1) = Trim$(UCase$(CStr(arrLabel(idxN, 1))))
+        Next idxN
+    End If
+
+    ' Compute starting row index from pc_dec (hex text in clsCPU)
+    Dim rowIdx As Long
+    
     rowIdx = pc_dec - line0_dec
 
+    ' Bounds before first read
     If rowIdx < 0 Or rowIdx >= ubRows_Opcode Then
+        errcode = -200  ' END-like termination
         GoTo ExecFinalize
     End If
 
+    ' First opcode from array
     opcode = CStr(arrOpcode(rowIdx + 1, 1))
+
+    ' Prepare Range row for EQU label resolution
+    Dim curRow As Range
     Set curRow = base.Offset(rowIdx, 0)
 
-    ' ========= Main loop =========
-    Do While errcode = 0 And pc_dec <= memEnd And (Not stepMode Or (stepMode And Not stepTaken))
+    ' ---- Throttle state (baseline 250ms) ----
+    Dim instrCount As Long: instrCount = 0
+    Dim nextPaint As Double: nextPaint = Timer + 0.25
+    'If headless Then DoEvents
 
+    Do While errcode = 0 And pc_dec <= memEnd
+        ' Read operands / row status from arrays
         op1 = CStr(arrOp1(rowIdx + 1, 1))
         op2 = CStr(arrOp2(rowIdx + 1, 1))
         label = CStr(arrLabel(rowIdx + 1, 1))
-
-        ' keep op2 uppercase for most uses except EQU literal semantics
-        If UCase$(op2) <> "EQU" Then op2 = UCase$(op2)
+        If op2 <> "EQU" Then
+            op2 = UCase$(op2)
+        End If
 
         If rowIdx >= 0 And rowIdx < ubRows_RowStat Then
             rowStat = CStr(arrRowStat(rowIdx + 1, 1))
@@ -2959,51 +2896,46 @@ Public Sub decExecute()
             rowStat = Trim$(UCase$(CStr(curRow.Offset(0, ofs_rowstat).value)))
         End If
 
-        executedThisIter = False
-
-        ' Execute only if not compiled and opcode exists
+        ' Skip compiled rows (RowStat="C") and blanks
         If rowStat <> "C" And opcode <> "" Then
-
             If debugMode Then
                 RefreshFlags myCpu
                 RefreshRegisters myCpu
-                myCpu.RefreshStack True
+                myCpu.RefreshStack (True)
                 Application.Calculate
+                Debug.Assert Not debugMode
             End If
-
             errcode = myCpu.RunOpcode(opcode, op1, op2, label)
-
-            If errcode = -200 Then
-                endedByEnd = True
-                Exit Do
+            If errcode <> 0 Then
+                ' -9999 = Invalid opcode (consistent with clsCPU errors)
+                If errcode = -9999 Then
+                    Range("Error").value = errcode
+                    Range("errMessage").value = "Error: Invalid OpCode: " & opcode & " at Line " & pc_dec
+                End If
             End If
-
-            If errcode = -9999 Then
-                Range("Error").value = errcode
-                Range("errMessage").value = "Error: Invalid OpCode: " & opcode & " at Line " & pc_dec
-                Exit Do
-            End If
-
-            executedThisIter = True
         End If
 
-        ' Advance PC only after processing this row (consistent with your existing design) [1](https://florida1-my.sharepoint.com/personal/jschaal_fifco_com/Documents/Microsoft%20Copilot%20Chat%20Files/8080%20Model%20Dec_2026-02-16_1524.txt)
-        pc_dec = myCpu.IncPC()
+        ' Throttled repaint during headless runs (console progress)
+        instrCount = instrCount + 1
+        If headless Then
+            If Timer >= nextPaint Then
+                'DoEvents
+                nextPaint = Timer + 0.25
+            End If
+        End If
 
-        ' Update row index for next fetch
+        ' Advance pc_dec and compute next row
+        pc_dec = myCpu.IncPC()
         rowIdx = pc_dec - line0_dec
         If rowIdx < 0 Or rowIdx >= ubRows_Opcode Then Exit Do
 
+        ' Next opcode from array
         opcode = CStr(arrOpcode(rowIdx + 1, 1))
+
+        ' Keep Range row current for EQU
         Set curRow = base.Offset(rowIdx, 0)
-
-        ' In step mode, only count the step if an instruction executed
-        If stepMode And executedThisIter Then
-            stepTaken = True
-        End If
-
-        ' Paint UI in step mode
-        If stepMode Then
+        ' (RowStat fetched at top of next iteration)
+        If Not headless Then
             If myCpu.RegistersDirty Then
                 RefreshRegisters myCpu
                 myCpu.RegistersDirty = False
@@ -3014,9 +2946,10 @@ Public Sub decExecute()
             End If
             If myCpu.StackDirty Then
                 myCpu.RefreshStack True
-                myCpu.StackDirty = False
+                myCpu.FlagsDirty = False
             End If
         End If
+        
     Loop
 
 ExecFinalize:
@@ -3025,17 +2958,14 @@ ExecFinalize:
         Application.Calculation = prevCalc
         Application.EnableEvents = True
         Application.ScreenUpdating = True
-
         RefreshRegisters myCpu
         RefreshFlags myCpu
-        myCpu.RefreshStack True
-
+        myCpu.RefreshStack (True)
         Application.StatusBar = False
         Range("consoleText") = usrForm.tbConsole.value
     End If
 
-    ' Show "Execution Complete" ONLY when END was encountered
-    If endedByEnd Then
+    If Range("Error").value = 0 Or Range("Error").value = -200 Then
         Range("errMessage") = "Execution Complete"
     End If
 End Sub
@@ -3113,33 +3043,7 @@ Public Sub ResetRegisters()
     Next i
 End Sub
 
-'------------------------------------------------------------------------------
-' Button Macros
-' '------------------------------------------------------------------------------
 
-Public Sub BTN_Run()
-    With Sheets("CPU")
-        .Range("Step").value = 0
-        .Range("Reset").value = 1
-    End With
-    SelectEngine
-End Sub
-
-Public Sub BTN_StepStart()
-    With Sheets("CPU")
-        .Range("Step").value = 1
-        .Range("Reset").value = 1
-    End With
-    SelectEngine    ' executes first step immediately
-End Sub
-
-Public Sub BTN_Step()
-    With Sheets("CPU")
-        .Range("Step").value = 1
-        .Range("Reset").value = 0
-    End With
-    SelectEngine
-End Sub
 '================================================================================
 ' Module:       decAssemble
 '================================================================================

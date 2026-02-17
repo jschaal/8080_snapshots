@@ -1,5 +1,5 @@
 === VBA EXPORT: 8080 Model Dec.xlsm ===
-Timestamp: 2/16/2026 7:16:44 PM
+Timestamp: 2/16/2026 4:15:20 PM
 ================================================================================
 
 ''' Component: ThisWorkbook
@@ -1887,6 +1887,11 @@ Public Function ACI(ByVal op1 As String) As Long
     SetParity result
     ACI = 0
 End Function
+
+'------------------------------------------------------------------------------
+'                         TBD
+'------------------------------------------------------------------------------
+
 ' --- SUB r (A = A - r) ; CY=1 on borrow ---
 Public Function SUB_(ByVal op1 As String) As Long
     Dim errorBase As Long: errorBase = 580
@@ -1986,11 +1991,6 @@ Public Function SBB(ByVal op1 As String) As Long
     SetSign result: SetZero result: SetParity result
     SBB = 0
 End Function
-
-'------------------------------------------------------------------------------
-'                         TBD
-'------------------------------------------------------------------------------
-
 
 ' --- SBI data (A = A - imm - CY) ; CY=1 on borrow ---
 Public Function SBI(ByVal op1 As String) As Long
