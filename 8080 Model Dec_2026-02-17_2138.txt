@@ -1,5 +1,5 @@
 === VBA EXPORT: 8080 Model Dec.xlsm ===
-Timestamp: 2/17/2026 11:01:44 PM
+Timestamp: 2/17/2026 9:38:37 PM
 ================================================================================
 
 ''' Component: ThisWorkbook
@@ -2113,22 +2113,30 @@ Public Function CMA() As Long
     ' Flags unaffected
     CMA = 0
 End Function
+
+
+'------------------------------------------------------------------------------
+'                         TBD
+'------------------------------------------------------------------------------
+
+
+
 ' --- INX/DCX rp (no flags) ---
 Public Function INX(ByVal rp As String) As Long
     Dim errorBase As Long: errorBase = 290
     Dim v As Variant
-    v = GetRegisterPairValue(rp, errorBase, "INX")
-    If IsEmpty(v) Then INX = errorBase: Exit Function
-    SetPairValue rp, (CLng(v) + 1) And &HFFFF&
+'    v = GetPairValue(rp, errorBase, "INX")
+'    If IsEmpty(v) Then INX = errorBase: Exit Function
+'    SetPairValue rp, (CLng(v) + 1) And &HFFFF&
     INX = 0
 End Function
 
 Public Function DCX(ByVal rp As String) As Long
     Dim errorBase As Long: errorBase = 240
     Dim v As Variant
-    v = GetRegisterPairValue(rp, errorBase, "DCX")
-    If IsEmpty(v) Then DCX = errorBase: Exit Function
-    SetPairValue rp, (CLng(v) - 1) And &HFFFF&
+'    v = GetPairValue(rp, errorBase, "DCX")
+'    If IsEmpty(v) Then DCX = errorBase: Exit Function
+'    SetPairValue rp, (CLng(v) - 1) And &HFFFF&
     DCX = 0
 End Function
 
@@ -2137,18 +2145,17 @@ Public Function DAD(ByVal rp As String) As Long
     Dim errorBase As Long: errorBase = 220
     Dim hl As Long, addv As Variant, sum As Long
 
-    
-    addv = GetRegisterPairValue(rp, errorBase, "DAD")
-    If IsEmpty(addv) Then DAD = errorBase: Exit Function
+'    addv = GetPairValue(rp, errorBase, "DAD")
+'    If IsEmpty(addv) Then DAD = errorBase: Exit Function
 
-    hl = ((pRegs("H") And 255) * 256&) + (pRegs("L") And 255)
-    sum = hl + CLng(addv)
+'    hl = ((pRegs("H") And 255) * 256&) + (pRegs("L") And 255)
+'    sum = hl + CLng(addv)
 
-    SetCarry IIf(sum > &HFFFF&, 1, 0)
-    sum = sum And &HFFFF&
+'    SetCarry IIf(sum > &HFFFF&, 1, 0)
+'    sum = sum And &HFFFF&
 
-    SetReg "H", (sum \ 256&) And 255
-    SetReg "L", sum And 255
+'    SetReg "H", (sum \ 256&) And 255
+'    SetReg "L", sum And 255
     DAD = 0
 End Function
 
@@ -2187,7 +2194,6 @@ Public Function DAA() As Long
 
     DAA = 0
 End Function
-
 
 ' --- XCHG (swap DE <-> HL) ---
 Public Function XCHG() As Long
@@ -2232,13 +2238,6 @@ Public Function RCOND(ByVal cond As String) As Long
         RCOND = 0
     End If
 End Function
-
-
-
-'------------------------------------------------------------------------------
-'                         TBD
-'------------------------------------------------------------------------------
-
 '==============================================================================
 '                         Copilot Helper Utilities
 '==============================================================================
@@ -2266,7 +2265,7 @@ Private Function ResolveImm8(ByVal token As String, ByVal errorBase As Long, ByV
     ResolveImm8 = (HexToDec(token) And 255)
 End Function
 
-Private Function GetRegisterPairValue(ByVal rp As String, ByVal errorBase As Long, ByVal opname As String) As Variant
+Private Function GetPairValue(ByVal rp As String, ByVal errorBase As Long, ByVal opname As String) As Variant
     Dim v As Long
     Select Case rp
         Case "B": v = ((pRegs("B") And 255) * 256&) + (pRegs("C") And 255)
@@ -2275,10 +2274,10 @@ Private Function GetRegisterPairValue(ByVal rp As String, ByVal errorBase As Lon
         Case "SP": v = (pRegs("SP") And &HFFFF&)
         Case Else
             SetError errorBase + 1, opname & ": Invalid Register Pair: " & rp
-            GetRegisterPairValue = Empty
+            GetPairValue = Empty
             Exit Function
     End Select
-    GetRegisterPairValue = (v And &HFFFF&)
+    GetPairValue = (v And &HFFFF&)
 End Function
 
 Private Sub SetPairValue(ByVal rp As String, ByVal v As Long)
@@ -2889,6 +2888,7 @@ Public Sub decExecute()
         Range("StackStart").value = FastHex(myCpu.Reg("SP"))
         Range("Mem").ClearContents
         Range("StackDetails").ClearContents
+        Exit Sub
         If stepMode Then
             RefreshFlags myCpu
             RefreshRegisters myCpu
@@ -3068,13 +3068,9 @@ ExecFinalize:
         Application.EnableEvents = True
         Application.ScreenUpdating = True
 
-        If Not stepMode Then
-            RefreshRegisters myCpu
-            RefreshFlags myCpu
-            myCpu.RefreshStack True
-        Else
-            Range("PC").value = FastHex(myCpu.Reg("PC"))
-        End If
+        RefreshRegisters myCpu
+        RefreshFlags myCpu
+        myCpu.RefreshStack True
 
         Application.StatusBar = False
         Range("consoleText") = usrForm.tbConsole.value

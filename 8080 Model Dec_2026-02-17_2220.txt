@@ -1,5 +1,5 @@
 === VBA EXPORT: 8080 Model Dec.xlsm ===
-Timestamp: 2/17/2026 11:01:44 PM
+Timestamp: 2/17/2026 10:20:10 PM
 ================================================================================
 
 ''' Component: ThisWorkbook
@@ -3068,13 +3068,9 @@ ExecFinalize:
         Application.EnableEvents = True
         Application.ScreenUpdating = True
 
-        If Not stepMode Then
-            RefreshRegisters myCpu
-            RefreshFlags myCpu
-            myCpu.RefreshStack True
-        Else
-            Range("PC").value = FastHex(myCpu.Reg("PC"))
-        End If
+        RefreshRegisters myCpu
+        RefreshFlags myCpu
+        myCpu.RefreshStack True
 
         Application.StatusBar = False
         Range("consoleText") = usrForm.tbConsole.value

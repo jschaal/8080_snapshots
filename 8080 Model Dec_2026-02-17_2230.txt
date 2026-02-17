@@ -1,5 +1,5 @@
 === VBA EXPORT: 8080 Model Dec.xlsm ===
-Timestamp: 2/17/2026 11:01:44 PM
+Timestamp: 2/17/2026 10:30:47 PM
 ================================================================================
 
 ''' Component: ThisWorkbook
@@ -3072,8 +3072,6 @@ ExecFinalize:
             RefreshRegisters myCpu
             RefreshFlags myCpu
             myCpu.RefreshStack True
-        Else
-            Range("PC").value = FastHex(myCpu.Reg("PC"))
         End If
 
         Application.StatusBar = False
