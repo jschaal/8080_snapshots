@@ -1,5 +1,5 @@
 === VBA EXPORT: 8080 Model Current.xlsm ===
-Timestamp: 3/5/2026 8:11:53 AM
+Timestamp: 3/3/2026 5:53:12 PM
 ================================================================================
 
 ''' Component: ThisWorkbook
@@ -2918,8 +2918,7 @@ Public Function GetInput() As Long
     Dim addr As Long
     Dim addr_high As Long, addr_low As Long
     Dim i As Long
-    'inputStr = InputBox("Enter Text:", "Console Input")
-    inputStr = usrForm.tbInput.value
+    inputStr = InputBox("Enter Text:", "Console Input")
     If inputStr <> "" Then
         addr_high = pRegs("H")
         addr_low = pRegs("L")
@@ -3300,19 +3299,6 @@ Public Function SmartDelay(ByVal centiSeconds As Long)
         DoEvents
     Loop
     SmartDelay = 0
-End Function
-Public Function HasUnitTest(instring As String) As Boolean
-    Dim ws As Worksheet, r As Range
-    Set ws = Sheets("Unit Tests")
-    For Each r In ws.Range("A:A")
-        If r.value Like "Unit_*" Then
-            If InStr(1, CStr(ws.Cells(r.row, "E").value), instring, vbTextCompare) > 0 Then
-                HasUnitTest = True
-                Exit Function
-            End If
-        End If
-    Next
-    HasUnitTest = False
 End Function
 '================================================================================
 ' Module:       modGlobals
@@ -4114,8 +4100,7 @@ Public Sub ForceCompile(Optional ByVal compile As Boolean = False)
     emptyRuns = 0
     Do While i <= memSize And Not compile And (emptyRuns < EMPTY_RUN_LIMIT)
         opcode = arrOpcode(i, 1)
-        'If opcode = "DB" Or opcode = "DS" Then
-        If opcode = "DB" Then
+        If opcode = "DB" Or opcode = "DS" Then
             compile = True
         End If
         If opcode = "" Then
@@ -5103,7 +5088,4 @@ End Sub
 
 
 ''' Component: Sheet6
-''' [No code]
-
-''' Component: Sheet9
 ''' [No code]

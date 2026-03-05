@@ -1,0 +1,84 @@
+Opcode,Group,In opcode table,Implemented (RunOpcode),Covered by unit tests,Tests
+ACI,Arithmetic,True,True,True,UNIT_T036
+ADC,Arithmetic,True,True,True,UNIT_T035
+ADD,Arithmetic,True,True,True,"UNIT_T029, UNIT_T030, UNIT_T056, UNIT_T057"
+ADI,Arithmetic,True,True,True,"UNIT_T031, UNIT_T048, UNIT_T058, UNIT_T059, UNIT_T060"
+ANA,Logical/bit,True,True,True,UNIT_T032
+ANI,Logical/bit,True,True,True,UNIT_T033
+CALL,Branch,True,True,True,"UNIT_T003, UNIT_T013"
+CC,Branch,True,True,False,
+CM,Branch,False,True,False,
+CMA,Logical/bit,True,True,True,UNIT_T045
+CMC,Logical/bit,True,True,True,UNIT_T046
+CMP,Arithmetic,True,True,False,
+CNC,Branch,True,True,False,
+CNZ,Branch,True,True,False,
+CP,Branch,True,True,False,
+CPE,Branch,True,True,False,
+CPI,Arithmetic,True,True,True,"UNIT_T034, UNIT_T055"
+CPO,Branch,True,True,False,
+CZ,Branch,True,True,True,UNIT_T052
+DAA,Arithmetic,True,True,True,"UNIT_T048, UNIT_T058, UNIT_T059, UNIT_T060"
+DAD,Arithmetic,True,True,True,UNIT_T047
+DB,I/O & machine,False,True,True,"UNIT_T013, UNIT_T054"
+DCR,Arithmetic,True,True,True,"UNIT_T005, UNIT_T006, UNIT_T010, UNIT_T011, UNIT_T012, UNIT_T017, UNIT_T022, UNIT_T052"
+DCX,Arithmetic,True,True,True,UNIT_T047
+DI,I/O & machine,True,False,False,
+END,I/O & machine,True,True,True,"UNIT_T002, UNIT_T003, UNIT_T004, UNIT_T005, UNIT_T006, UNIT_T007, UNIT_T008, UNIT_T009, UNIT_T010, UNIT_T011, UNIT_T012, UNIT_T013, UNIT_T014, UNIT_T015, UNIT_T016, UNIT_T017, UNIT_T018, UNIT_T019, UNIT_T020, UNIT_T021, UNIT_T022, UNIT_T023, UNIT_T024, UNIT_T025, UNIT_T026, UNIT_T027, UNIT_T028, UNIT_T029, UNIT_T030, UNIT_T031, UNIT_T032, UNIT_T033, UNIT_T034, UNIT_T035, UNIT_T036, UNIT_T037, UNIT_T038, UNIT_T039, UNIT_T040, UNIT_T041, UNIT_T042, UNIT_T043, UNIT_T044, UNIT_T045, UNIT_T046, UNIT_T047, UNIT_T048, UNIT_T049, UNIT_T050, UNIT_T051, UNIT_T052, UNIT_T053, UNIT_T054, UNIT_T055, UNIT_T056, UNIT_T057, UNIT_T058, UNIT_T059, UNIT_T060"
+EQU,I/O & machine,False,True,True,"UNIT_T025, UNIT_T026, UNIT_T053"
+HLT,I/O & machine,True,True,True,"UNIT_T001, UNIT_T006, UNIT_T007, UNIT_T021, UNIT_T022, UNIT_T023, UNIT_T024, UNIT_T051, UNIT_T052, UNIT_T055"
+IN,I/O & machine,True,True,True,UNIT_T055
+INR,Arithmetic,True,True,True,"UNIT_T004, UNIT_T007, UNIT_T010, UNIT_T016"
+INX,Arithmetic,True,True,True,UNIT_T047
+JC,Branch,True,True,False,
+JM,Branch,True,True,True,UNIT_T023
+JMP,Branch,True,True,True,UNIT_T021
+JNC,Branch,True,True,False,
+JNZ,Branch,True,True,True,UNIT_T022
+JP,Branch,True,True,True,UNIT_T023
+JPE,Branch,True,True,True,UNIT_T024
+JPO,Branch,True,True,True,UNIT_T024
+JZ,Branch,True,True,True,"UNIT_T006, UNIT_T007, UNIT_T022, UNIT_T055"
+LDA,Data transfer,True,True,False,
+LDAX,Data transfer,True,True,False,
+LHLD,Data transfer,True,True,False,
+LXI,Data transfer,True,True,True,"UNIT_T013, UNIT_T018, UNIT_T019, UNIT_T025, UNIT_T047, UNIT_T049, UNIT_T050, UNIT_T051, UNIT_T054, UNIT_T056, UNIT_T057"
+MOV,Data transfer,True,True,True,"UNIT_T001, UNIT_T008, UNIT_T010, UNIT_T014, UNIT_T015, UNIT_T056, UNIT_T057"
+MVI,Data transfer,True,True,True,"UNIT_T001, UNIT_T002, UNIT_T003, UNIT_T004, UNIT_T005, UNIT_T006, UNIT_T007, UNIT_T008, UNIT_T009, UNIT_T010, UNIT_T011, UNIT_T012, UNIT_T014, UNIT_T015, UNIT_T016, UNIT_T017, UNIT_T020, UNIT_T021, UNIT_T022, UNIT_T023, UNIT_T024, UNIT_T026, UNIT_T027, UNIT_T028, UNIT_T029, UNIT_T030, UNIT_T031, UNIT_T032, UNIT_T033, UNIT_T034, UNIT_T035, UNIT_T036, UNIT_T037, UNIT_T038, UNIT_T039, UNIT_T040, UNIT_T041, UNIT_T042, UNIT_T043, UNIT_T044, UNIT_T045, UNIT_T048, UNIT_T051, UNIT_T052, UNIT_T053, UNIT_T054, UNIT_T055, UNIT_T056, UNIT_T057, UNIT_T058, UNIT_T059, UNIT_T060"
+NOP,I/O & machine,True,True,False,
+ORA,Logical/bit,True,True,True,"UNIT_T008, UNIT_T009, UNIT_T010, UNIT_T015, UNIT_T020, UNIT_T023, UNIT_T024"
+ORG,I/O & machine,False,True,False,
+ORI,Logical/bit,True,True,True,"UNIT_T026, UNIT_T027, UNIT_T028"
+OUT,I/O & machine,True,True,True,UNIT_T055
+PCHL,Branch,True,True,True,UNIT_T051
+POP,Stack,True,True,True,"UNIT_T010, UNIT_T020"
+PRI,I/O & machine,True,True,True,UNIT_T053
+PRT,I/O & machine,True,True,True,UNIT_T054
+PUSH,Stack,True,True,True,"UNIT_T002, UNIT_T010, UNIT_T020"
+RAL,Logical/bit,True,True,True,UNIT_T044
+RAR,Logical/bit,True,True,True,UNIT_T044
+RC,Branch,True,True,False,
+RET,Branch,True,True,True,UNIT_T003
+RLC,Logical/bit,True,True,True,UNIT_T043
+RM,Branch,False,True,False,
+RNC,Branch,True,True,False,
+RNZ,Branch,True,True,False,
+RP,Branch,True,True,False,
+RPE,Branch,True,True,False,
+RPO,Branch,True,True,False,
+RRC,Logical/bit,True,True,True,UNIT_T043
+RST,I/O & machine,True,False,False,
+RZ,Branch,True,True,True,UNIT_T052
+SBB,Arithmetic,True,True,True,UNIT_T039
+SBI,Arithmetic,True,True,True,UNIT_T040
+SHLD,Data transfer,True,True,False,
+SPHL,Stack,True,True,True,UNIT_T050
+STA,Data transfer,True,True,False,
+STAX,Data transfer,True,True,False,
+STC,Logical/bit,True,True,True,"UNIT_T035, UNIT_T036, UNIT_T039, UNIT_T040, UNIT_T041, UNIT_T044, UNIT_T045, UNIT_T046"
+SUB,Arithmetic,True,True,True,UNIT_T037
+SUI,Arithmetic,True,True,True,UNIT_T038
+XCHG,Data transfer,True,True,True,UNIT_T049
+XRA,Logical/bit,True,True,True,UNIT_T041
+XRI,Logical/bit,True,True,True,UNIT_T042
+XTHL,Stack,True,True,False,

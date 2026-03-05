@@ -1,5 +1,5 @@
-=== VBA EXPORT: 8080 Model Current.xlsm ===
-Timestamp: 3/5/2026 8:11:53 AM
+=== VBA EXPORT: 8080 Model Mem Model.xlsm ===
+Timestamp: 2/27/2026 1:05:59 AM
 ================================================================================
 
 ''' Component: ThisWorkbook
@@ -135,13 +135,13 @@ Public Sub ParseLabels()
 
             ' Always add by label name (including EQU)
             If Not pLabels.Exists(labelName) Then
-                pLabels.ADD labelName, labelRec
+                pLabels.add labelName, labelRec
             End If
 
             ' Only add address xref for addressable rows (A, D)
             If (labelRec.clsLabelType = "A" Or labelRec.clsLabelType = "D") Then
                 If Not pLabelXrefs.Exists(addrHex) Then
-                    pLabelXrefs.ADD addrHex, labelRec
+                    pLabelXrefs.add addrHex, labelRec
                 End If
             End If
 
@@ -185,8 +185,8 @@ Public Function AddLabel(ByVal labelName As String, ByVal LabelType As String, B
         End If
 
         If Not pLabels.Exists(labelName) And Not pLabelXrefs.Exists(AddressHex) Then
-            pLabels.ADD labelName, labelRec
-            pLabelXrefs.ADD AddressHex, labelRec ' also allow lookup by address hex
+            pLabels.add labelName, labelRec
+            pLabelXrefs.add AddressHex, labelRec ' also allow lookup by address hex
         End If
     Else
         res = -1
@@ -243,7 +243,7 @@ Public Sub ParseProcedures()
             Set labelRec = New clsLabelRecord
             labelRec.clsLabelType = "P" ' procedure marker
             If Not pProcedures.Exists(labelName) Then
-                pProcedures.ADD labelName, labelRec
+                pProcedures.add labelName, labelRec
             End If
         End If
     Next r
@@ -303,15 +303,16 @@ Option Explicit
 Public Sub RunDynamicTests()
     Dim wsTest As Worksheet, wsEMU As Worksheet
     Dim memCapacity As Long
-    Dim startCol As Integer, ofs_label As Integer
-    Dim endCol As Integer
+    Dim startCol As Integer, ofsOp As Integer, ofs_label As Integer
+    Dim endCol As Integer, colWidth As Integer
+    Dim stepMode As Boolean
     Dim tests As Collection                    ' (TestName, Range, NameRow)
     Dim t As Variant
     Dim resultsCol As Long, runCol As Long, compileCol As Long
+    Dim useDec As Boolean
     Dim overrideStepMode As Boolean
     Dim overrideReset As Boolean
-    Dim overrideTrace As Boolean
-    Dim overrideSkipBreaks As Boolean
+    Dim restCPU As Boolean
     Dim compileThis As Boolean
 
     Set wsTest = Sheets("Unit Tests")
@@ -319,9 +320,12 @@ Public Sub RunDynamicTests()
 
     ' Pull from CPU sheet (unchanged)
     memCapacity = usrHexToDec(wsEMU.Range("MemSize").value)
+    startCol = wsEMU.Range("ofs_label").value
+    ofsOp = wsEMU.Range("ofs_opcode").value
     ofs_label = wsEMU.Range("ofs_label").value
-    startCol = ofs_label
     endCol = wsEMU.Range("ofs_op2").value
+    colWidth = (endCol - startCol) + 1
+    
 '  turn off step mode and force reset for testrunner
     overrideStepMode = Range("Step") = 1
     If overrideStepMode Then
@@ -331,22 +335,18 @@ Public Sub RunDynamicTests()
     If overrideReset Then
         Range("Reset") = 1
     End If
-    overrideTrace = Range("Trace") = 1
-    If overrideTrace Then
-        Range("Trace") = 0
-    End If
-    overrideSkipBreaks = Range("SkipBreaks") = 0
-    If overrideSkipBreaks Then
-        Range("SkipBreaks") = 1
-    End If
-    
+
     ' Honor your Run flag column again
     runCol = wsTest.Range("RunTest").Column
     compileCol = wsTest.Range("CompileTest").Column
     resultsCol = wsTest.Range("TestRunner").Column
 
-    Application.ScreenUpdating = False
-    Application.Calculation = xlCalculationManual
+    'stepMode = (wsEMU.Range("Step").value = 1)
+    stepMode = False
+    If Not stepMode Then
+        Application.ScreenUpdating = False
+        Application.Calculation = xlCalculationManual
+    End If
 
     ' Discover tests by names in Column A
     Set tests = DiscoverAllTests(wsTest)
@@ -434,12 +434,6 @@ Public Sub RunDynamicTests()
     If overrideReset Then
         Range("Reset") = 0
     End If
-    If overrideTrace Then
-        Range("Trace") = 1
-    End If
-    If overrideSkipBreaks Then
-        Range("SkipBreaks") = 0
-    End If
 
     Dim finalMsg As String
     If batchPassed Then
@@ -477,7 +471,7 @@ Private Function DiscoverAllTests(ws As Worksheet) As Collection
             item(0) = testName
             Set item(1) = block
             item(2) = r          ' row of the name for PASS/FAIL cell
-            tests.ADD item
+            tests.add item
         End If
     Next r
 
@@ -711,7 +705,6 @@ Private Declare PtrSafe Function SendMessage Lib "user32" Alias "SendMessageA" (
     
 Private Const WM_VSCROLL As Long = &H115
 Private Const SB_BOTTOM As Long = 7
-Private pSendText As Boolean
 
 Public Sub ClearConsole()
     Me.tbConsole.Locked = False
@@ -765,7 +758,7 @@ Public Sub ConPrt(ByVal data As String, Optional ByVal prtSpace As Boolean = Fal
         
 End Sub
 
-Public Function ConReadSwitches() As Byte
+Public Function ConReadButtons() As Byte
     Dim wsUnitTest As Worksheet
     Set wsUnitTest = ThisWorkbook.Worksheets("Unit Tests")
     Dim outByte As Byte
@@ -799,6 +792,7 @@ Public Function ConReadSwitches() As Byte
     Me.txtLights.text = outByte
     Dim i As Integer
     Dim rangeName As String
+    Dim compare As Long
     
     power = 1
     For i = 0 To 7
@@ -812,7 +806,7 @@ Public Function ConReadSwitches() As Byte
     Next i
         
         
-    ConReadSwitches = outByte
+    ConReadButtons = outByte
 End Function
 Public Sub ConSetSwitches(ByVal inByte)
     Dim wsUnitTest As Worksheet
@@ -938,23 +932,6 @@ Public Sub ConSetLights(ByVal inByte)
     Me.Repaint
 End Sub
 
-Public Sub ResetConsole()
-    ConSetSwitches 0
-    ConSetLights 0
-    ClearConsole
-End Sub
-
-Public Sub ResetSendText()
-    pSendText = False
-End Sub
-
-Public Sub SendText()
-    pSendText = True
-End Sub
-
-Private Sub cmdEnter_Click()
-    pSendText = True
-End Sub
 
 ''' Component: Exportcode
 Option Explicit
@@ -1119,6 +1096,7 @@ Private pAddressList As clsAddrList
 Private pMemory As clsMemory
 
 '--- UI deferral (headless runs) ---
+Private mDeferUI As Boolean
 Private mUIRegsDirty As Boolean
 Private mUIFlagsDirty As Boolean
 Private mUIStackDirty As Boolean
@@ -1133,15 +1111,15 @@ Private mUIStackDirty As Boolean
 '------------------------------------------------------------------------------
 Private Sub Class_Initialize()
     Set pRegs = CreateObject("Scripting.Dictionary")
-    pRegs.ADD "A", 0
-    pRegs.ADD "B", 0
-    pRegs.ADD "C", 0
-    pRegs.ADD "D", 0
-    pRegs.ADD "E", 0
-    pRegs.ADD "H", 0
-    pRegs.ADD "L", 0
-    pRegs.ADD "PC", 0
-    pRegs.ADD "SP", &HFF
+    pRegs.add "A", 0
+    pRegs.add "B", 0
+    pRegs.add "C", 0
+    pRegs.add "D", 0
+    pRegs.add "E", 0
+    pRegs.add "H", 0
+    pRegs.add "L", 0
+    pRegs.add "PC", 0
+    pRegs.add "SP", &HFF
 
     Set pFlags = CreateObject("Scripting.Dictionary")
     pFlags("Carry") = 0
@@ -1175,7 +1153,7 @@ Public Function RunOpcode(ByVal opcode As String, _
 
     'opcode = Trim$(UCase$(opcode))
     Select Case opcode
-        Case "ADD": result = Me.ADD(op1)      ' 120xx
+        Case "ADD": result = Me.add(op1)      ' 120xx
         Case "ADI": result = Me.ADI(op1)      ' 130xx
         Case "ANA": result = Me.ANA(op1)      ' 140xx
         Case "ANI": result = Me.ANI(op1)      ' 150xx
@@ -1184,7 +1162,7 @@ Public Function RunOpcode(ByVal opcode As String, _
         Case "CALL": result = Me.CALL_(op1, op2)         ' 160xx error base inside
         Case "DB":   result = 0                              ' data pseudo-op
         Case "EQU":  result = Me.EQU(op1, label)
-        Case "END":  result = ERR_EXEC_END                ' soft termination
+        Case "END":  result = -200                           ' soft termination
         Case "DCR":  result = Me.DCR(op1)                 ' 230xx
         Case "HLT":  result = Me.HLT()                    ' -100
         Case "IN":   result = Me.IN_(op1)                 ' 270xx
@@ -1230,6 +1208,7 @@ Public Function RunOpcode(ByVal opcode As String, _
         Case "STC": result = Me.STC()
         Case "CMC": result = Me.CMC()
         Case "CMA": result = Me.CMA()
+        Case "NOP": result = 0
         
         ' --- 16-bit register-pair ops ---
         Case "INX": result = Me.INX(op1)
@@ -1262,14 +1241,6 @@ Public Function RunOpcode(ByVal opcode As String, _
         Case "RPE": result = Me.RCOND("PE")
         Case "RPO": result = Me.RCOND("PO")
         
-        ' --- address routines from
-        Case "LDA":  result = Me.LDA(op1)
-        Case "STA":  result = Me.STA(op1)
-        Case "LHLD": result = Me.LHLD(op1)
-        Case "SHLD": result = Me.SHLD(op1)
-        Case "LDAX": result = Me.LDAX(op1)
-        Case "STAX": result = Me.STAX(op1)
-        Case "XTHL": result = Me.XTHL()
         ' --- IO ops (non standard 8080) ---
         Case "PRI": result = Me.PRI(op1)
         Case "PRT": result = Me.PRT()
@@ -1289,34 +1260,32 @@ End Function
 ' Errors (base 120):
 ' 120: missing operand
 ' 121: invalid register name
-
-Public Function ADD(ByVal op1 As String) As Long
+Public Function add(ByVal op1 As String) As Long
     Dim errorBase As Long: errorBase = 120
-    Dim src As Variant
-    Dim a As Long, b As Long, sum As Long, result As Long
+    Dim dec_a As Long, dec_op As Long, sum As Long, result As Long
     Dim ac As Long
 
-    src = Get8(op1, errorBase, "ADD")
-    If IsEmpty(src) Then ADD = errorBase: Exit Function
+    If op1 = "" Then SetError errorBase, "ADD: Missing Operand": add = errorBase: Exit Function
+    If Not pRegs.Exists(op1) Then SetError errorBase + 1, "ADD: Invalid Register: " & op1: add = errorBase + 1: Exit Function
 
-    a = pRegs("A") And 255
-    b = CLng(src) And 255
+    dec_a = pRegs("A") And 255
+    dec_op = usrHexToDec(pRegs(op1)) And 255
 
-    sum = a + b
+    sum = dec_a + dec_op
     result = sum And 255
 
-    SetCarry IIf(sum > 255, 1, 0)
-    ac = IIf(((a And &HF) + (b And &HF)) > &HF, 1, 0)
+    ' Flags
+    pFlags("Carry") = IIf(sum > 255, 1, 0)
+    ac = IIf(((dec_a And &HF) + (dec_op And &HF)) > &HF, 1, 0)
+    
     SetAC ac
-
     SetReg "A", result
     SetSign result
     SetZero result
     SetParity result
-
-    ADD = 0
+    
+    add = 0
 End Function
-
 ' ADI data8
 ' A <- A + immediate ; sets S,Z,P; sets CY and AC appropriately
 ' Errors (base 130):
@@ -1358,26 +1327,22 @@ End Function
 ' 141: invalid register
 Public Function ANA(ByVal op1 As String) As Long
     Dim errorBase As Long: errorBase = 140
-    Dim src As Variant
-    Dim a As Long, b As Long, result As Long
+    Dim dec_a As Long, dec_op As Long, result As Long
 
-    src = Get8(op1, errorBase, "ANA")
-    If IsEmpty(src) Then ANA = errorBase: Exit Function
+    If op1 = "" Then SetError errorBase, "ANA: Missing Operand": ANA = errorBase: Exit Function
+    If Not pRegs.Exists(op1) Then SetError errorBase + 1, "ANA: Invalid Register: " & op1: ANA = errorBase + 1: Exit Function
 
-    a = pRegs("A") And 255
-    b = CLng(src) And 255
-    result = (a And b) And 255
+    dec_a = pRegs("A") And 255
+    dec_op = pRegs(op1) And 255
+    result = (dec_a And dec_op) And 255
 
     SetReg "A", result
-
-    ' 8080 behavior: AND clears CY and sets AC=1
     SetCarry 0
-    SetAC 1
-
+    SetAC 1                     ' 8080 convention for AND
     SetSign result
     SetZero result
     SetParity result
-
+    
     ANA = 0
 End Function
 ' ANI data8
@@ -1416,21 +1381,19 @@ End Function
 ' 191: invalid register
 Public Function CMP(ByVal op1 As String) As Long
     Dim errorBase As Long: errorBase = 190
-    Dim src As Variant
-    Dim a As Long, b As Long
-    Dim diff As Long, result As Long
-    Dim borrow As Long, acBorrow As Long
+    Dim dec_a As Long, dec_op As Long, diff As Long
+    Dim borrow As Long, acBorrow As Long, result As Long
 
-    src = Get8(op1, errorBase, "CMP")
-    If IsEmpty(src) Then CMP = errorBase: Exit Function
+    If op1 = "" Then SetError errorBase, "CMP: Missing Operand": CMP = errorBase: Exit Function
+    If Not pRegs.Exists(op1) Then SetError errorBase + 1, "CMP: Invalid Register: " & op1: CMP = errorBase + 1: Exit Function
 
-    a = pRegs("A") And 255
-    b = CLng(src) And 255
+    dec_a = pRegs("A") And 255
+    dec_op = usrHexToDec(pRegs(op1)) And 255
 
-    borrow = IIf(a < b, 1, 0)
-    acBorrow = IIf((a And &HF) < (b And &HF), 1, 0)
+    borrow = IIf(dec_a < dec_op, 1, 0)
+    acBorrow = IIf((dec_a And &HF) < (dec_op And &HF), 1, 0)
 
-    diff = a - b
+    diff = dec_a - dec_op
     result = diff And 255
 
     SetCarry borrow
@@ -1438,11 +1401,9 @@ Public Function CMP(ByVal op1 As String) As Long
     SetSign result
     SetZero result
     SetParity result
-
-    ' A is unchanged for CMP
+    
     CMP = 0
 End Function
-
 ' CPI data8
 ' Compare A with immediate: (A - data) sets S,Z,P; CY=1 on borrow; AC as nibble borrow; A unchanged
 ' Errors (base 200):
@@ -1554,26 +1515,26 @@ End Function
 '   230: missing operand
 '   231: invalid register name
 '------------------------------------------------------------------------------
-
 Public Function DCR(ByVal op1 As String) As Long
     Dim errorBase As Long: errorBase = 230
-    Dim cur As Variant, result As Long, ac As Long
+    Dim result As Long, current As Long, ac As Long
 
-    cur = Get8(op1, errorBase, "DCR")
-    If IsEmpty(cur) Then DCR = errorBase: Exit Function
+    If op1 = "" Then SetError errorBase, "DCR: Missing Operands: " & op1: DCR = errorBase: Exit Function
+    If Not pRegs.Exists(op1) Then SetError errorBase + 1, "DCR: Invalid Register: " & op1: DCR = errorBase + 1: Exit Function
 
-    result = (CLng(cur) - 1) And 255
-    ac = IIf((CLng(cur) And &HF) = 0, 1, 0)
+    current = pRegs(op1)
+    result = (current - 1) And 255
 
+    ' Auxiliary carry is set on borrow from bit 4 (i.e., when low nibble goes from 0 -> F)
+    ac = IIf((current And &HF) = 0, 1, 0)
     SetAC ac
     SetZero result
     SetSign result
     SetParity result
+    SetReg op1, result
 
-    If Not Set8(op1, result, errorBase + 1, "DCR") Then DCR = errorBase + 1: Exit Function
     DCR = 0
 End Function
-
 
 '------------------------------------------------------------------------------
 ' EQU value, <LabelFromSheet>
@@ -1616,26 +1577,26 @@ End Function
 '   280: missing operand
 '   281: invalid register
 '------------------------------------------------------------------------------
-
 Public Function INR(ByVal op1 As String) As Long
     Dim errorBase As Long: errorBase = 280
-    Dim cur As Variant, result As Long, ac As Long
+    Dim result As Long, current As Long, nibble As Long, ac As Long
 
-    cur = Get8(op1, errorBase, "INR")
-    If IsEmpty(cur) Then INR = errorBase: Exit Function
+    If op1 = "" Then SetError errorBase, "INR: Missing Operands: " & op1: INR = errorBase: Exit Function
+    If Not pRegs.Exists(op1) Then SetError errorBase + 1, "INR: Invalid Register: " & op1: INR = errorBase + 1: Exit Function
 
-    result = (CLng(cur) + 1) And 255
-    ac = IIf((CLng(cur) And &HF) = &HF, 1, 0)
+    current = pRegs(op1)
+    result = (current + 1) And 255
 
+    nibble = current And 15
+    ac = IIf(nibble = 15, 1, 0)
     SetAC ac
     SetZero result
     SetSign result
     SetParity result
-
-    If Not Set8(op1, result, errorBase + 1, "INR") Then INR = errorBase + 1: Exit Function
-    INR = 0
+    SetReg op1, result
+    
+INR = 0
 End Function
-
 
 '------------------------------------------------------------------------------
 ' JMP label
@@ -1651,7 +1612,6 @@ Public Function JMP(op1 As String) As Long
     Dim memEnd_dec As Long, op_dec As Long
     Dim record As clsLabelRecord
     Dim line0Address As Long
-    Dim addRec As clsAddrRecord
 
     If op1 = "" Then SetError errorBase, "JMP: Missing Operand: " & op1: JMP = errorBase: Exit Function
 
@@ -1665,8 +1625,7 @@ Public Function JMP(op1 As String) As Long
     op_dec = usrHexToDec(op1)
     If op_dec < 0 Or op_dec > memEnd_dec Then SetError errorBase + 3, "JMP: Invalid Address: " & op1: JMP = errorBase + 3: Exit Function
 
-    Set addRec = pAddressList.GetAddr(op_dec)
-    SetPC addRec.clsAddressLast
+    SetPC op_dec - 1
 
     JMP = 0
 End Function
@@ -1789,13 +1748,13 @@ End Function
 '------------------------------------------------------------------------------
 Public Function MOV(ByVal op1 As String, ByVal op2 As String) As Long
     Dim errorBase As Long: errorBase = 350
-    Dim v As Variant
+    If op1 = "" Or op2 = "" Then SetError errorBase, "MOV: Missing Operands: " & op1 & " " & op2: MOV = errorBase: Exit Function
 
-    v = Get8(op2, errorBase, "MOV")
-    If IsEmpty(v) Then MOV = errorBase: Exit Function
-
-    If Not Set8(op1, CLng(v), errorBase + 1, "MOV") Then MOV = errorBase + 1: Exit Function
-
+    If pRegs.Exists(op1) And pRegs.Exists(op2) Then
+        SetReg op1, pRegs(op2)
+    Else
+        SetError errorBase + 1, "MOV: Invalid Registers: " & op1 & " " & op2: MOV = errorBase + 1: Exit Function
+    End If
     MOV = 0
 End Function
 
@@ -1808,13 +1767,21 @@ End Function
 '------------------------------------------------------------------------------
 Public Function MVI(ByVal op1 As String, ByVal op2 As String) As Long
     Dim errorBase As Long: errorBase = 360
-    Dim imm As Variant
+    Dim labelRecord As clsLabelRecord
 
-    imm = ResolveImm8(op2, errorBase, "MVI")
-    If IsEmpty(imm) Then MVI = errorBase: Exit Function
+    If op1 = "" Or op2 = "" Then SetError errorBase, "MVI: Missing Operands: " & op1 & " " & op2: MVI = errorBase: Exit Function
 
-    If Not Set8(op1, CLng(imm), errorBase, "MVI") Then MVI = errorBase: Exit Function
+    Set labelRecord = pLabels.GetLabel(op2)
+    If Not labelRecord Is Nothing Then op2 = labelRecord.clsAddressHex
 
+    If Not usrIsValidHex(op2) Then SetError errorBase + 1, "MVI: Invalid Hex Value: " & op2: MVI = errorBase + 1: Exit Function
+    'add mov to M
+    If pRegs.Exists(op1) Then
+        SetReg op1, usrHexToDec(op2)
+    Else
+        SetError errorBase + 2, "MVI: Invalid Register: " & op1: MVI = errorBase + 2: Exit Function
+    End If
+    
     MVI = 0
 End Function
 Public Function NOP() As Long
@@ -1828,26 +1795,22 @@ End Function
 '------------------------------------------------------------------------------
 Public Function ORA(ByVal op1 As String) As Long
     Dim errorBase As Long: errorBase = 380
-    Dim src As Variant
-    Dim a As Long, b As Long, result As Long
+    Dim result As Long
+    Dim dec_op1 As Long, dec_a As Long
 
-    src = Get8(op1, errorBase, "ORA")
-    If IsEmpty(src) Then ORA = errorBase: Exit Function
+    If op1 = "" Then SetError errorBase, "ORA: Missing Operand: " & op1: ORA = errorBase: Exit Function
 
-    a = pRegs("A") And 255
-    b = CLng(src) And 255
-    result = (a Or b) And 255
+    dec_op1 = pRegs(op1)
+    dec_a = pRegs("A")
+    result = (dec_a Or dec_op1) And 255
 
     SetReg "A", result
-
-    ' OR clears CY and AC on 8080
     SetCarry 0
     SetAC 0
-
     SetSign result
     SetZero result
     SetParity result
-
+    
     ORA = 0
 End Function
 ' ORI data
@@ -1859,13 +1822,30 @@ Public Function ORI(ByVal op1 As String) As Long
     Dim errorBase As Long: errorBase = 390
     Dim result As Long
     Dim dec_op1 As Long, dec_a As Long
-    Dim imm8 As Variant
+    Dim lbl As clsLabelRecord
     
-    imm8 = ResolveImm8(op1, errorBase, "ORI")
-    If IsEmpty(imm8) Then ORI = errorBase: Exit Function
-    
-    dec_op1 = CLng(imm8)
-    
+    ' 1) Operand required
+    If op1 = "" Then
+        SetError errorBase, "ORI: Missing Operand"
+        ORI = errorBase
+        Exit Function
+    End If
+
+    ' 2) Allow EQU labels as immediate (like your MVI does)
+    Set lbl = pLabels.GetLabel(op1)
+    If Not lbl Is Nothing Then
+        op1 = lbl.clsAddressHex  ' use the label's hex value/address
+    End If
+
+    ' 3) Validate immediate (8-bit)
+    If Not usrIsValidHex(op1) Then
+        SetError errorBase + 1, "ORI: Invalid Hex Immediate: " & op1
+        ORI = errorBase + 1
+        Exit Function
+    End If
+    dec_op1 = usrHexToDec(op1) And 255  ' force to 8-bit
+
+    ' 4) Compute result
     dec_a = pRegs("A") And 255
     result = (dec_a Or dec_op1) And 255
 
@@ -2051,16 +2031,14 @@ End Function
 ' --- ADC r (A = A + r + CY) ---
 Public Function ADC(ByVal op1 As String) As Long
     Dim errorBase As Long: errorBase = 110
-    Dim src As Variant
-    Dim a As Long, b As Long, c As Long
-    Dim sum As Long, result As Long
+    Dim a As Long, b As Long, c As Long, sum As Long, result As Long
     Dim ac As Long
 
-    src = Get8(op1, errorBase, "ADC")
-    If IsEmpty(src) Then ADC = errorBase: Exit Function
+    If op1 = "" Then SetError errorBase, "ADC: Missing Operand": ADC = errorBase: Exit Function
+    If Not pRegs.Exists(op1) Then SetError errorBase + 1, "ADC: Invalid Register: " & op1: ADC = errorBase + 1: Exit Function
 
     a = pRegs("A") And 255
-    b = CLng(src) And 255
+    b = pRegs(op1) And 255
     c = pFlags("Carry") And 1
 
     sum = a + b + c
@@ -2071,10 +2049,7 @@ Public Function ADC(ByVal op1 As String) As Long
     SetAC ac
 
     SetReg "A", result
-    SetSign result
-    SetZero result
-    SetParity result
-
+    SetSign result: SetZero result: SetParity result
     ADC = 0
 End Function
 
@@ -2083,12 +2058,29 @@ End Function
 Public Function ACI(ByVal op1 As String) As Long
     Dim errorBase As Long: errorBase = 100
     Dim a As Long, c As Long, sum As Long, result As Long, ac As Long, dec_op1 As Long
-    Dim imm8 As Variant
+    Dim lbl As clsLabelRecord
     
-    imm8 = ResolveImm8(op1, errorBase, "ORI")
-    If IsEmpty(imm8) Then ACI = errorBase: Exit Function
+    ' 1) Operand required
+    If op1 = "" Then
+        SetError errorBase, "ACI: Missing Operand"
+        ACI = errorBase
+        Exit Function
+    End If
 
-    dec_op1 = CLng(imm8)
+    ' 2) Allow EQU labels as immediate (like your MVI does)
+    Set lbl = pLabels.GetLabel(op1)
+    If Not lbl Is Nothing Then
+        op1 = lbl.clsAddressHex  ' use the label's hex value/address
+    End If
+
+    ' 3) Validate immediate (8-bit)
+    If Not usrIsValidHex(op1) Then
+        SetError errorBase + 1, "ACI: Invalid Hex Immediate: " & op1
+        ACI = errorBase + 1
+        Exit Function
+    End If
+    
+    dec_op1 = usrHexToDec(op1) And 255  ' force to 8-bit
     a = pRegs("A") And 255
     c = pFlags("Carry") And 1
     
@@ -2108,16 +2100,14 @@ End Function
 ' --- SUB r (A = A - r) ; CY=1 on borrow ---
 Public Function SUB_(ByVal op1 As String) As Long
     Dim errorBase As Long: errorBase = 580
-    Dim src As Variant
-    Dim a As Long, b As Long
-    Dim diff As Long, result As Long
+    Dim a As Long, b As Long, diff As Long, result As Long
     Dim borrow As Long, acBorrow As Long
 
-    src = Get8(op1, errorBase, "SUB")
-    If IsEmpty(src) Then SUB_ = errorBase: Exit Function
+    If op1 = "" Then SetError errorBase, "SUB: Missing Operand": SUB_ = errorBase: Exit Function
+    If Not pRegs.Exists(op1) Then SetError errorBase + 1, "SUB: Invalid Register: " & op1: SUB_ = errorBase + 1: Exit Function
 
     a = pRegs("A") And 255
-    b = CLng(src) And 255
+    b = pRegs(op1) And 255
 
     borrow = IIf(a < b, 1, 0)
     acBorrow = IIf((a And &HF) < (b And &HF), 1, 0)
@@ -2125,15 +2115,11 @@ Public Function SUB_(ByVal op1 As String) As Long
     diff = a - b
     result = diff And 255
 
-    ' 8080: CY=1 indicates borrow on subtraction
     SetCarry borrow
     SetAC acBorrow
 
     SetReg "A", result
-    SetSign result
-    SetZero result
-    SetParity result
-
+    SetSign result: SetZero result: SetParity result
     SUB_ = 0
 End Function
 
@@ -2142,12 +2128,29 @@ Public Function SUI(ByVal op1 As String) As Long
     Dim errorBase As Long: errorBase = 590
     Dim a As Long, b As Long, diff As Long, result As Long, dec_op1 As Long
     Dim borrow As Long, acBorrow As Long
-    Dim imm8 As Variant
+    Dim lbl As clsLabelRecord
+
+    ' 1) Operand required
+    If op1 = "" Then
+        SetError errorBase, "SUI: Missing Operand"
+        SUI = errorBase
+        Exit Function
+    End If
+
+    ' 2) Allow EQU labels as immediate (like your MVI does)
+    Set lbl = pLabels.GetLabel(op1)
+    If Not lbl Is Nothing Then
+        op1 = lbl.clsAddressHex  ' use the label's hex value/address
+    End If
+
+    ' 3) Validate immediate (8-bit)
+    If Not usrIsValidHex(op1) Then
+        SetError errorBase + 1, "SUI: Invalid Hex Immediate: " & op1
+        SUI = errorBase + 1
+        Exit Function
+    End If
     
-    imm8 = ResolveImm8(op1, errorBase, "ORI")
-    If IsEmpty(imm8) Then SUI = errorBase: Exit Function
-    
-    dec_op1 = CLng(imm8)
+    dec_op1 = usrHexToDec(op1) And 255  ' force to 8-bit
     a = pRegs("A") And 255
     b = dec_op1 And 255
 
@@ -2168,57 +2171,18 @@ End Function
 ' --- SBB r (A = A - r - CY) ; CY=1 on borrow ---
 Public Function SBB(ByVal op1 As String) As Long
     Dim errorBase As Long: errorBase = 500
-    Dim src As Variant
-    Dim a As Long, b As Long, c As Long
-    Dim subtr As Long
-    Dim diff As Long, result As Long
-    Dim borrow As Long, acBorrow As Long
-
-    src = Get8(op1, errorBase, "SBB")
-    If IsEmpty(src) Then SBB = errorBase: Exit Function
-
-    a = pRegs("A") And 255
-    b = CLng(src) And 255
-    c = pFlags("Carry") And 1
-
-    subtr = b + c
-
-    borrow = IIf(a < subtr, 1, 0)
-    acBorrow = IIf((a And &HF) < ((b And &HF) + c), 1, 0)
-
-    diff = a - subtr
-    result = diff And 255
-
-    SetCarry borrow
-    SetAC acBorrow
-
-    SetReg "A", result
-    SetSign result
-    SetZero result
-    SetParity result
-
-    SBB = 0
-End Function
-' --- SBI data (A = A - imm - CY) ; CY=1 on borrow ---
-' --- SBI data (A = A - imm - CY) ; CY=1 on borrow ---
-Public Function SBI(ByVal op1 As String) As Long
-    Dim errorBase As Long: errorBase = 510
     Dim a As Long, b As Long, c As Long, subtr As Long
     Dim diff As Long, result As Long
     Dim borrow As Long, acBorrow As Long
-    Dim imm8 As Variant
 
-    imm8 = ResolveImm8(op1, errorBase, "SBI")
-    If IsEmpty(imm8) Then
-        SBI = errorBase
-        Exit Function
-    End If
+    If op1 = "" Then SetError errorBase, "SBB: Missing Operand": SBB = errorBase: Exit Function
+    If Not pRegs.Exists(op1) Then SetError errorBase + 1, "SBB: Invalid Register: " & op1: SBB = errorBase + 1: Exit Function
 
     a = pRegs("A") And 255
-    b = CLng(imm8)
+    b = pRegs(op1) And 255
     c = pFlags("Carry") And 1
-
     subtr = b + c
+
     borrow = IIf(a < subtr, 1, 0)
     acBorrow = IIf((a And &HF) < ((b And &HF) + c), 1, 0)
 
@@ -2227,54 +2191,70 @@ Public Function SBI(ByVal op1 As String) As Long
 
     SetCarry borrow
     SetAC acBorrow
+
     SetReg "A", result
     SetSign result: SetZero result: SetParity result
+    SBB = 0
+End Function
+' --- SBI data (A = A - imm - CY) ; CY=1 on borrow ---
+Public Function SBI(ByVal op1 As String) As Long
+    Dim errorBase As Long: errorBase = 510
+    Dim imm As Variant, a As Long, b As Long, c As Long, subtr As Long
+    Dim diff As Long, result As Long
+    Dim borrow As Long, acBorrow As Long
 
+
+    a = pRegs("A") And 255
+    b = CLng(imm) And 255
+    c = pFlags("Carry") And 1
+    subtr = b + c
+
+    borrow = IIf(a < subtr, 1, 0)
+    acBorrow = IIf((a And &HF) < ((b And &HF) + c), 1, 0)
+
+    diff = a - subtr
+    result = diff And 255
+
+    SetCarry borrow
+    SetAC acBorrow
+
+    SetReg "A", result
+    SetSign result: SetZero result: SetParity result
     SBI = 0
 End Function
 
 ' --- XRA r (A = A XOR r) ; clears CY and AC; sets S/Z/P ---
-
 Public Function XRA(ByVal op1 As String) As Long
     Dim errorBase As Long: errorBase = 610
-    Dim src As Variant
-    Dim a As Long, b As Long, result As Long
+    Dim a As Long, b As Long, result As Long, dec_op1 As Long
 
-    src = Get8(op1, errorBase, "XRA")
-    If IsEmpty(src) Then XRA = errorBase: Exit Function
-
+    If op1 = "" Then SetError errorBase, "XRA: Missing Operand": XRA = errorBase: Exit Function
+    If Not pRegs.Exists(op1) Then SetError errorBase + 1, "XRA: Invalid Register: " & op1: XRA = errorBase + 1: Exit Function
+    
     a = pRegs("A") And 255
-    b = CLng(src) And 255
+    b = pRegs(op1) And 255
     result = (a Xor b) And 255
 
     SetReg "A", result
-
-    ' XOR clears CY and AC
     SetCarry 0
     SetAC 0
-
-    SetSign result
-    SetZero result
-    SetParity result
-
+    SetSign result: SetZero result: SetParity result
     XRA = 0
 End Function
-
 
 ' --- XRI data (A = A XOR imm) ; clears CY and AC; sets S/Z/P ---
 Public Function XRI(ByVal op1 As String) As Long
     Dim errorBase As Long: errorBase = 620
     Dim a As Long, result As Long
     Dim dec_opl As Long
-    Dim imm8 As Variant
-    
-    imm8 = ResolveImm8(op1, errorBase, "XRI")
-    If IsEmpty(imm8) Then XRI = errorBase: Exit Function
-    
-    dec_opl = CLng(imm8)
 
+    dec_opl = ValidateOps(errorBase, "XRI", op1)
+    If dec_opl < 0 Then
+        XRI = -dec_opl
+        Exit Function
+    End If
     a = pRegs("A") And 255
-    result = (a Xor dec_opl) And 255
+    result = (a Xor dec_opl And 255) And 255
 
     SetReg "A", result
     SetCarry 0
@@ -2385,7 +2365,7 @@ End Function
 ' --- DAA (BCD adjust after add/adc) ---
 Public Function DAA() As Long
     Dim errorBase As Long: errorBase = 210
-    Dim a As Long, ADD As Long
+    Dim a As Long, add As Long
     Dim cyIn As Long, cyOut As Long
     Dim lowAdj As Boolean
     Dim result As Long
@@ -2393,21 +2373,21 @@ Public Function DAA() As Long
     a = pRegs("A") And 255
     cyIn = pFlags("Carry") And 1
 
-    ADD = 0
+    add = 0
     lowAdj = False
 
     If ((a And &HF) > 9) Or (pFlags("AC") = 1) Then
-        ADD = ADD + &H6
+        add = add + &H6
         lowAdj = True
     End If
 
     If (a > &H99) Or (cyIn = 1) Then
-        ADD = ADD + &H60
+        add = add + &H60
     End If
 
-    result = a + ADD
+    result = a + add
 
-    cyOut = IIf((result > 255) Or (a > &H99) Or (cyIn = 1 And (ADD And &H60) <> 0), 1, 0)
+    cyOut = IIf((result > 255) Or (a > &H99) Or (cyIn = 1 And (add And &H60) <> 0), 1, 0)
     SetCarry cyOut
     SetAC IIf(lowAdj, 1, 0)
 
@@ -2441,11 +2421,8 @@ End Function
 ' --- PCHL (PC = HL) ; loop will IncPC, so set PC to HL-1 ---
 Public Function PCHL() As Long
     Dim hl As Long
-    Dim addRec As clsAddrRecord
     hl = ((pRegs("H") And 255) * 256&) + (pRegs("L") And 255)
-    
-    Set addRec = pAddressList.GetAddr(hl)
-    SetPC addRec.clsAddressLast
+    SetPC (hl - 1)
     PCHL = 0
 End Function
 
@@ -2465,10 +2442,7 @@ Public Function RCOND(ByVal cond As String) As Long
         RCOND = 0
     End If
 End Function
-' --- IN input from external ports ---
-' OP1:
-'    FF / 255: Read switch status
-'    Fe / 254: Read line of text and store at M (H/L) memory location
+
 Public Function IN_(ByVal op1 As String) As Long
     Dim errorBase As Long: errorBase = 270
     Dim portVal As Long
@@ -2490,13 +2464,10 @@ Public Function IN_(ByVal op1 As String) As Long
     End If
     
     Select Case dec_port
-        Case 255: 'FF
-            portVal = usrForm.ConReadSwitches
+        Case 255:
+            portVal = usrForm.ConReadButtons
             SetReg "A", portVal
-        
-        Case 254: 'FE
-            IN_ = GetInput
-        
+                  
         Case Else
             SetError errorBase + 3, "IN: Unconfigured Port: " & op1
             IN_ = errorBase + 3
@@ -2508,11 +2479,8 @@ End Function
 
 ' --- OUT_ ; Port Out ---
 '  OP1:
-'   FF / 255 - Lights
-'   FE / 254 - Set switches
-'   FD / 253 - Repaint Console for light changes
-'   FC / 252 - Open and Clear Console
-'   FB / 251 - delay reg A in 1/100 seconds
+'   FF - Lights
+'   FE - Set switches
 Public Function OUT_(ByVal op1 As String) As Long
     Dim errorBase As Long: errorBase = 400
     Dim portVal As Long
@@ -2534,24 +2502,11 @@ Public Function OUT_(ByVal op1 As String) As Long
     End If
     
     Select Case dec_port
-        Case 255: 'FF
+        Case 255:
             usrForm.ConSetLights (pRegs("A"))
-            DoEvents
                   
-        Case 254: 'FE
+        Case 254:
             usrForm.ConSetSwitches (pRegs("A"))
-            DoEvents
-        Case 253: 'FD
-            usrForm.Repaint
-            DoEvents
-        Case 252: 'FC
-            ShowConsole
-            ResetConsole
-            DoEvents
-        Case 251: 'FB'
-            portVal = pRegs("A")
-            SmartDelay (portVal)
-            
         Case Else
             SetError errorBase + 3, "OUT: Unconfigured Port: " & op1
             OUT_ = errorBase + 3
@@ -2647,6 +2602,29 @@ Public Property Get Flags() As Variant
 End Property
 
 
+' Load registers from sheet (for continuation runs)
+Public Sub LDARegs()
+    Dim key As Variant, strReg As String
+    For Each key In pRegs.Keys
+        If key = "PC" Or key = "SP" Then
+            strReg = key
+        Else
+            strReg = "R_" & key
+        End If
+        pRegs(key) = usrHexToDec(Range(strReg).value)
+    Next key
+End Sub
+
+' Reset register *display* cells (not used to clear internal state here)
+Public Sub STARegs()
+    Dim key As Variant, strReg As String
+    For Each key In pRegs.Keys
+        If key <> "PC" And key <> "SP" Then
+            strReg = "R_" & key
+            Range(strReg).value = usrFastHex(pRegs("key"))
+        End If
+    Next key
+End Sub
 
 ' Centralized error setter (writes Error / errMessage on sheet)
 Private Sub SetError(ByVal errcode As Long, ByVal errString As String)
@@ -2675,11 +2653,7 @@ Public Function SetPC(ByVal address As Long)
 End Function
 Public Function GetCurrentIdx() As Long
     Set pNodeRec = pAddressList.GetAddr(pPC_dec)
-    If pNodeRec Is Nothing Then
-        GetCurrentIdx = -1
-    Else
-        GetCurrentIdx = pNodeRec.clsIndex
-    End If
+    GetCurrentIdx = pNodeRec.clsIndex
 End Function
 '------------------------------------------------------------------------------
 ' SetParity (fast via LUT): sets Parity=1 for even parity as on 8080
@@ -2735,6 +2709,30 @@ Public Function SetReg(ByVal register As String, ByVal value As Long)
     pRegs(register) = value
     mUIRegsDirty = True
     SetReg = value
+End Function
+Private Function ValidateOps(ByVal errorBase As Long, ByVal opcode As String, ByVal op1 As String, Optional ByVal op2 As String = "") As Variant
+    Dim lbl As clsLabelRecord
+    
+    ' 1) Operand required
+    If op1 = "" Then
+        SetError errorBase, opcode & ": Missing Operand"
+        ValidateOps = -errorBase
+        Exit Function
+    End If
+
+    ' 2) Allow EQU labels as immediate (like your MVI does)
+    Set lbl = pLabels.GetLabel(op1)
+    If Not lbl Is Nothing Then
+        op1 = lbl.clsAddressHex ' use the label's hex value/address
+    End If
+
+    ' 3) Validate immediate (8-bit)
+    If Not usrIsValidHex(op1) Then
+        SetError errorBase + 1, opcode & ": Invalid Hex Immediate: " & op1
+        ValidateOps = -(errorBase + 1)
+        Exit Function
+    End If
+    ValidateOps = usrHexToDec(op1)
 End Function
 '==============================================================================
 '                     Console Procedure Shims (CALL targets)
@@ -2913,197 +2911,6 @@ Public Function RefreshStack(ByVal refresh) As Boolean
     RefreshStack = pStack.ShowStack(refresh)
 End Function
 
-Public Function GetInput() As Long
-    Dim inputStr As String
-    Dim addr As Long
-    Dim addr_high As Long, addr_low As Long
-    Dim i As Long
-    'inputStr = InputBox("Enter Text:", "Console Input")
-    inputStr = usrForm.tbInput.value
-    If inputStr <> "" Then
-        addr_high = pRegs("H")
-        addr_low = pRegs("L")
-        addr = addr_high * 256 + addr_low - 1
-        For i = 1 To Len(inputStr)
-            pMemory.addr(addr + i) = Asc(Mid(inputStr, i, 1))
-        Next i
-        pMemory.addr(addr + Len(inputStr) + 1) = 0
-    End If
-    GetInput = 0
-End Function
-
-' ==========================
-' Memory / Operand helpers
-' ==========================
-Private Function HLAddr() As Long
-    HLAddr = ((pRegs("H") And 255) * 256&) + (pRegs("L") And 255)
-End Function
-
-Private Function Get8(ByVal operand As String, ByVal errorBase As Long, ByVal opname As String) As Variant
-    operand = UCase$(Trim$(operand))
-    If operand = "" Then
-        SetError errorBase, opname & ": Missing operand"
-        Get8 = Empty
-        Exit Function
-    End If
-
-    If operand = "M" Then
-        Get8 = CLng(pMemory.addr(HLAddr())) And 255
-        Exit Function
-    End If
-
-    If pRegs.Exists(operand) Then
-        Get8 = CLng(pRegs(operand)) And 255
-        Exit Function
-    End If
-
-    SetError errorBase, opname & ": Invalid operand: " & operand
-    Get8 = Empty
-End Function
-
-Private Function Set8(ByVal dest As String, ByVal value As Long, ByVal errorBase As Long, ByVal opname As String) As Boolean
-    dest = UCase$(Trim$(dest))
-    value = value And 255
-
-    If dest = "M" Then
-        pMemory.addr(HLAddr()) = CByte(value)
-        Set8 = True
-        Exit Function
-    End If
-
-    If pRegs.Exists(dest) Then
-        SetReg dest, value
-        Set8 = True
-        Exit Function
-    End If
-
-    SetError errorBase, opname & ": Invalid destination: " & dest
-    Set8 = False
-End Function
-
-Private Function ResolveAddr16(ByVal token As String, ByVal errorBase As Long, ByVal opname As String) As Variant
-    Dim lbl As clsLabelRecord
-    token = UCase$(Trim$(token))
-
-    If token = "" Then
-        SetError errorBase, opname & ": Missing address"
-        ResolveAddr16 = Empty
-        Exit Function
-    End If
-
-    Set lbl = pLabels.GetLabel(token)
-    If Not lbl Is Nothing Then token = lbl.clsAddressHex
-
-    If Not usrIsValidHex(token) Then
-        SetError errorBase + 1, opname & ": Invalid address: " & token
-        ResolveAddr16 = Empty
-        Exit Function
-    End If
-
-    ResolveAddr16 = usrHexToDec(token) And &HFFFF&
-End Function
-Public Function LDA(ByVal op1 As String) As Long
-    Dim errorBase As Long: errorBase = 310
-    Dim addr As Variant
-    addr = ResolveAddr16(op1, errorBase, "LDA")
-    If IsEmpty(addr) Then LDA = errorBase: Exit Function
-
-    SetReg "A", CLng(pMemory.addr(CLng(addr))) And 255
-    LDA = 0
-End Function
-
-Public Function STA(ByVal op1 As String) As Long
-    Dim errorBase As Long: errorBase = 550
-    Dim addr As Variant
-    addr = ResolveAddr16(op1, errorBase, "STA")
-    If IsEmpty(addr) Then STA = errorBase: Exit Function
-
-    pMemory.addr(CLng(addr)) = CByte(pRegs("A") And 255)
-    STA = 0
-End Function
-
-Public Function LHLD(ByVal op1 As String) As Long
-    Dim errorBase As Long: errorBase = 330
-    Dim addr As Variant, a As Long
-    addr = ResolveAddr16(op1, errorBase, "LHLD")
-    If IsEmpty(addr) Then LHLD = errorBase: Exit Function
-
-    a = CLng(addr)
-    SetReg "L", pMemory.addr(a) And 255
-    SetReg "H", pMemory.addr(a + 1) And 255
-    LHLD = 0
-End Function
-
-Public Function SHLD(ByVal op1 As String) As Long
-    Dim errorBase As Long: errorBase = 520
-    Dim addr As Variant, a As Long
-    addr = ResolveAddr16(op1, errorBase, "SHLD")
-    If IsEmpty(addr) Then SHLD = errorBase: Exit Function
-
-    a = CLng(addr)
-    pMemory.addr(a) = CByte(pRegs("L") And 255)
-    pMemory.addr(a + 1) = CByte(pRegs("H") And 255)
-    SHLD = 0
-End Function
-Public Function LDAX(ByVal rp As String) As Long
-    Dim errorBase As Long: errorBase = 320
-    Dim addr As Long
-
-    rp = UCase$(Trim$(rp))
-    Select Case rp
-        Case "B"
-            addr = ((pRegs("B") And 255) * 256&) + (pRegs("C") And 255)
-        Case "D"
-            addr = ((pRegs("D") And 255) * 256&) + (pRegs("E") And 255)
-        Case Else
-            SetError errorBase + 1, "LDAX: Invalid register pair: " & rp
-            LDAX = errorBase + 1
-            Exit Function
-    End Select
-
-    SetReg "A", pMemory.addr(addr) And 255
-    LDAX = 0
-End Function
-
-Public Function STAX(ByVal rp As String) As Long
-    Dim errorBase As Long: errorBase = 560
-    Dim addr As Long
-
-    rp = UCase$(Trim$(rp))
-    Select Case rp
-        Case "B"
-            addr = ((pRegs("B") And 255) * 256&) + (pRegs("C") And 255)
-        Case "D"
-            addr = ((pRegs("D") And 255) * 256&) + (pRegs("E") And 255)
-        Case Else
-            SetError errorBase + 1, "STAX: Invalid register pair: " & rp
-            STAX = errorBase + 1
-            Exit Function
-    End Select
-
-    pMemory.addr(addr) = CByte(pRegs("A") And 255)
-    STAX = 0
-End Function
-Public Function XTHL() As Long
-    Dim errorBase As Long: errorBase = 630
-    Dim sp As Long
-    Dim tmp As Long
-
-    sp = pRegs("SP") And &HFFFF&
-
-    ' swap L <-> (SP)
-    tmp = pMemory.addr(sp) And 255
-    pMemory.addr(sp) = CByte(pRegs("L") And 255)
-    SetReg "L", tmp
-
-    ' swap H <-> (SP+1)
-    tmp = pMemory.addr(sp + 1) And 255
-    pMemory.addr(sp + 1) = CByte(pRegs("H") And 255)
-    SetReg "H", tmp
-
-    mUIStackDirty = True
-    XTHL = 0
-End Function
 '================================================================================
 ' Class:        clsDecCPU
 '================================================================================
@@ -3125,9 +2932,6 @@ Private gConsoleBuffer As String
 ' Tracks whether the console form is open
 Public mConsoleOpen As Boolean
 Private pAddressList As clsAddrList
-Public Const ERR_EXEC_HALT As Long = -100
-Public Const ERR_EXEC_END  As Long = -200
-Public Const ERR_BAD_OPCODE As Long = -9999
 '------------------------------------------------------------------------------
 ' gCPU
 ' Returns the shared CPU instance, creating it if necessary.
@@ -3238,9 +3042,7 @@ Public Sub ShowConsole()
     usrForm.Show vbModeless
     mConsoleOpen = True
 End Sub
-Public Sub ResetConsole()
-    usrForm.ResetConsole
-End Sub
+
 Public Sub ConsoleBuffer_Clear()
     gConsoleBuffer = vbNullString
 End Sub
@@ -3260,6 +3062,7 @@ Public Sub SelectEngine()
 End Sub
 
 Public Function usrReadSwitch(ByVal switch As Long) As Long
+    Dim switchVal As Long
     Dim switchStat As Boolean
     Select Case switch
         Case 0:
@@ -3287,32 +3090,6 @@ Public Function usrReadSwitch(ByVal switch As Long) As Long
     Else
         usrReadSwitch = 0
     End If
-End Function
-
-Public Sub AutoCalc()
-     Application.Calculation = xlCalculationAutomatic
-     Application.Calculate
-End Sub
-Public Function SmartDelay(ByVal centiSeconds As Long)
-    Dim endTime As Double
-    endTime = Timer + centiSeconds / 100
-    Do While Timer < endTime
-        DoEvents
-    Loop
-    SmartDelay = 0
-End Function
-Public Function HasUnitTest(instring As String) As Boolean
-    Dim ws As Worksheet, r As Range
-    Set ws = Sheets("Unit Tests")
-    For Each r In ws.Range("A:A")
-        If r.value Like "Unit_*" Then
-            If InStr(1, CStr(ws.Cells(r.row, "E").value), instring, vbTextCompare) > 0 Then
-                HasUnitTest = True
-                Exit Function
-            End If
-        End If
-    Next
-    HasUnitTest = False
 End Function
 '================================================================================
 ' Module:       modGlobals
@@ -3391,15 +3168,11 @@ End Function
 Public Sub clsPUSH(ByVal addr As Long, ByVal Val As Long, ByVal Reg As String)
     Dim newItem As clsDecRegisterState
     Set newItem = New clsDecRegisterState
-    Dim memory As clsMemory
-    
-    Set memory = gMemory
-    memory.addr(addr) = Val
-    
+
     newItem.MemoryAddress = addr
     newItem.value = Val
     newItem.RegisterName = Reg
-    
+
     m_Count = m_Count + 1
     If m_Count = 1 Then
         ReDim m_Items(1 To 1)
@@ -3483,8 +3256,9 @@ Private gArrRowStat As Variant
 Private gArrOp1 As Variant
 Private gArrOp2 As Variant
 Private gArrLabel As Variant
-Private gBreak As Boolean
-    
+Private gArrAddr As Variant
+Private mBaseMemStart As Long
+
 Private Sub InvalidateCodeCache()
     gCacheValid = False
 End Sub
@@ -3505,10 +3279,10 @@ Public Sub decExecute()
     Dim pc_dec As Long
     Dim opcode As String
     Dim op1 As String, op2 As String, label As String
-    Dim ofs_opcode As Long, ofs_op1 As Long, ofs_op2 As Long, ofs_rowstat As Long, ofs_label As Long
+    Dim ofs_opcode As Long, ofs_op1 As Long, ofs_op2 As Long, ofs_rowstat As Long, ofs_label As Long, offset As Long
     Dim Reset As Long, errcode As Long
     Dim rowStat As String
-    Dim memStart As Long, memEnd As Long
+    Dim memStart As Long, memSize As Long, memEnd As Long
     Dim myCpu As clsDecCPU
     Dim headless As Boolean
     Dim prevCalc As XlCalculation
@@ -3517,22 +3291,15 @@ Public Sub decExecute()
     Dim stepTaken As Boolean
     Dim executedThisIter As Boolean
     Dim endedByEnd As Boolean
-    Dim skipBreaks As Boolean
-    Dim traceReads As Boolean
 
     ' --- Cached arrays mapped into locals for the run ---
     Dim base As Range, line0_dec As Long
     Dim countRows As Long
-    Dim arrOpcode As Variant, arrRowStat As Variant, arrOp1 As Variant, arrOp2 As Variant, arrLabel As Variant
-    Dim ubRows_Opcode As Long
-
+    Dim arrOpcode As Variant, arrRowStat As Variant, arrOp1 As Variant, arrOp2 As Variant, arrLabel As Variant, arrAddr As Variant
+    Dim ubRows_Opcode As Long, ubRows_RowStat As Long
     Dim rowIdx As Long
+    Dim curRow As Range
 
-    Dim memAddrDec As Long
-    Dim memBefore As String, memAfter As String, memAddrHex As String, memNote As String
-    Dim memTrackLen As Long
-    Dim preHL As Long, preSP As Long
-    Dim b0 As Long, b1 As Long, a0 As Long, a1 As Long
     ' ========= Initialization =========
     InitHexTable
 
@@ -3545,8 +3312,6 @@ Public Sub decExecute()
     debugMode = (Range("Debug").value = 1)
     stepMode = (Range("Step").value = 1)
     Reset = Range("Reset").value
-    skipBreaks = Range("SkipBreaks") = 1
-    traceReads = TraceMemReads()
 
     errcode = 0
     endedByEnd = False
@@ -3566,24 +3331,24 @@ Public Sub decExecute()
     End If
     
     memStart = usrHexToDec(Range("MemStart").value)
-    memEnd = memStart + usrHexToDec(Range("MemSize").value)
+    memSize = usrHexToDec(Range("MemSize").value)
+    memEnd = memStart + memSize
 
     Set myCpu = gDecCPU                                         ' persistent CPU instance
 
     ' ========= Reset / continuation =========
     If Reset = 1 Then
         ' Fresh run / Step Start: reset CPU and rebuild cache
-        If TraceEnabled() Then TraceClear
-        ForceCompile (False)
         ResetAddressList
         ResetDecCPU
         Set myCpu = gDecCPU
         InvalidateCodeCache
-        gBreak = False
 
         mConsoleOpen = False
         pc_dec = CLng(Range("Line0_dec").value)
         myCpu.SetPC pc_dec
+        offset = myCpu.GetCurrentIdx
+        Range(Range("Line0").offset(offset, 0).address).Select
         myCpu.Reg("SP") = memEnd
 
         Range("StackStart").value = usrFastHex(myCpu.Reg("SP"))
@@ -3642,6 +3407,7 @@ Public Sub decExecute()
         gArrOp1 = base.offset(0, ofs_op1).Resize(countRows, 1).value
         gArrOp2 = base.offset(0, ofs_op2).Resize(countRows, 1).value
         gArrLabel = base.offset(0, ofs_label).Resize(countRows, 1).value
+        gArrAddr = base.offset(0, 0).Resize(countRows, 1).value
 
         ' Normalize once (same intent as your existing loop)
         Dim idxN As Long
@@ -3664,6 +3430,7 @@ Public Sub decExecute()
     arrLabel = gArrLabel
 
     ubRows_Opcode = UBound(arrOpcode, 1)
+    ubRows_RowStat = UBound(arrRowStat, 1)
 
     ' ========= Establish starting row index =========
     rowIdx = myCpu.GetCurrentIdx
@@ -3673,6 +3440,7 @@ Public Sub decExecute()
     End If
 
     opcode = CStr(arrOpcode(rowIdx + 1, 1))
+    Set curRow = base.offset(rowIdx, 0)
 
     ' ========= Main loop =========
     Do While errcode = 0 And pc_dec <= memEnd And (Not stepMode Or (stepMode And Not stepTaken))
@@ -3684,15 +3452,10 @@ Public Sub decExecute()
         ' keep op2 uppercase for most uses except EQU literal semantics
         If UCase$(op2) <> "EQU" Then op2 = UCase$(op2)
 
-        rowStat = CStr(arrRowStat(rowIdx + 1, 1))
-        ' Check for code breaks; override in testrunner to have no breaks
-        If rowStat = "B" And Not stepMode And Not skipBreaks Then
-            If gBreak Then
-                gBreak = False
-            Else
-                gBreak = True
-                Exit Do
-            End If
+        If rowIdx >= 0 And rowIdx < ubRows_RowStat Then
+            rowStat = CStr(arrRowStat(rowIdx + 1, 1))
+        Else
+            rowStat = Trim$(UCase$(CStr(curRow.offset(0, ofs_rowstat).value)))
         End If
 
         executedThisIter = False
@@ -3708,203 +3471,20 @@ Public Sub decExecute()
                 Debug.Assert Not debugMode
             End If
 
-            ' --- Trace memory sampling (before) ---
-            memAddrHex = "": memBefore = "": memAfter = "": memNote = ""
-            memTrackLen = 0
-            memAddrDec = 0
-            
-            If TraceEnabled() Then
-                ' Snapshot pre-state for address calculations
-                preHL = ((myCpu.Reg("H") And 255) * 256&) + (myCpu.Reg("L") And 255)
-                preSP = (myCpu.Reg("SP") And &HFFFF&)
-            
-                Select Case opcode
-            
-                    ' ===== M-operand writes (HL indirect) =====
-                    Case "MOV"
-                        If UCase$(op1) = "M" Then
-                            memAddrDec = preHL
-                            memTrackLen = 1
-                        End If
-            
-                    Case "MVI", "INR", "DCR"
-                        If UCase$(op1) = "M" Then
-                            memAddrDec = preHL
-                            memTrackLen = 1
-                        End If
-            
-                    ' ===== Direct memory writes =====
-                    Case "STA"
-                        If usrIsValidHex(op1) Then
-                            memAddrDec = usrHexToDec(op1) And &HFFFF&
-                            memTrackLen = 1
-                        Else
-                            memNote = "STA addr token=" & op1
-                        End If
-            
-                    Case "SHLD"
-                        If usrIsValidHex(op1) Then
-                            memAddrDec = usrHexToDec(op1) And &HFFFF&
-                            memTrackLen = 2
-                        Else
-                            memNote = "SHLD addr token=" & op1
-                        End If
-            
-                    ' ===== Stack writes =====
-                    Case "PUSH"
-                        memAddrDec = (preSP - 2) And &HFFFF&
-                        memTrackLen = 2
-                        memNote = "PUSH writes SP-2..SP-1"
-            
-                    Case "CALL", "CC", "CNC", "CNZ", "CZ", "CP", "CM", "CPE", "CPO"
-                        ' Conditional calls only write if taken; we’ll detect by before/after diff
-                        memAddrDec = (preSP - 2) And &HFFFF&
-                        memTrackLen = 2
-                        memNote = "CALL writes SP-2..SP-1 (if taken)"
-            
-                    ' ===== XTHL swaps stack top =====
-                    Case "XTHL"
-                        memAddrDec = preSP
-                        memTrackLen = 2
-                        memNote = "XTHL swaps (SP),(SP+1)"
-            
-                End Select
-                
-                ' ===== Memory reads (optional) =====
-                If memTrackLen = 0 And traceReads Then
-                
-                    Select Case opcode
-                
-                        ' MOV r, M  (read from (HL))
-                        Case "MOV"
-                            If UCase$(op2) = "M" Then
-                                memAddrDec = preHL
-                                memTrackLen = 1
-                                memNote = "READ (HL)"
-                            End If
-                
-                        ' ALU/LOGIC using M (read from (HL))
-                        Case "ADD", "ADC", "SUB", "SBB", "ANA", "XRA", "ORA", "CMP"
-                            If UCase$(op1) = "M" Then
-                                memAddrDec = preHL
-                                memTrackLen = 1
-                                memNote = "READ (HL)"
-                            End If
-                
-                        ' Direct reads
-                        Case "LDA"
-                            If usrIsValidHex(op1) Then
-                                memAddrDec = usrHexToDec(op1) And &HFFFF&
-                                memTrackLen = 1
-                                memNote = "READ (addr)"
-                            Else
-                                memNote = "READ LDA addr token=" & op1
-                            End If
-                
-                        Case "LHLD"
-                            If usrIsValidHex(op1) Then
-                                memAddrDec = usrHexToDec(op1) And &HFFFF&
-                                memTrackLen = 2
-                                memNote = "READ16 (addr)"
-                            Else
-                                memNote = "READ LHLD addr token=" & op1
-                            End If
-                
-                        ' Indirect reads via BC/DE
-                        Case "LDAX"
-                            If UCase$(op1) = "B" Then
-                                memAddrDec = ((myCpu.Reg("B") And 255) * 256&) + (myCpu.Reg("C") And 255)
-                                memTrackLen = 1
-                                memNote = "READ (BC)"
-                            ElseIf UCase$(op1) = "D" Then
-                                memAddrDec = ((myCpu.Reg("D") And 255) * 256&) + (myCpu.Reg("E") And 255)
-                                memTrackLen = 1
-                                memNote = "READ (DE)"
-                            End If
-                
-                        ' Stack reads
-                        Case "POP"
-                            memAddrDec = preSP
-                            memTrackLen = 2
-                            memNote = "READ16 (SP) POP"
-                
-                        Case "RET", "RNZ", "RZ", "RC", "RNC", "RP", "RM", "RPE", "RPO"
-                            memAddrDec = preSP
-                            memTrackLen = 2
-                            memNote = "READ16 (SP) RET* (if taken)"
-                    End Select
-                
-                End If
-            
-                ' Read BEFORE bytes if we have an address
-                If memTrackLen = 1 Then
-                    b0 = gMemory.addr(memAddrDec) And 255
-                    memBefore = Right$("00" & hex$(b0), 2)
-                    memAddrHex = Right$("0000" & hex$(memAddrDec), 4)
-                ElseIf memTrackLen = 2 Then
-                    b0 = gMemory.addr(memAddrDec) And 255
-                    b1 = gMemory.addr((memAddrDec + 1) And &HFFFF&) And 255
-                    memBefore = Right$("00" & hex$(b0), 2) & " " & Right$("00" & hex$(b1), 2)
-                    memAddrHex = Right$("0000" & hex$(memAddrDec), 4)
-                End If
-            End If
-            
             errcode = myCpu.RunOpcode(opcode, op1, op2, label)
-            executedThisIter = True
-            
-            If TraceEnabled() Then
-                ' Read AFTER bytes for tracked address and include only if changed
-                Dim isRead As Boolean
-                If memTrackLen = 1 Then
-                    a0 = gMemory.addr(memAddrDec) And 255
-                    memAfter = Right$("00" & hex$(a0), 2)
-            
-                    isRead = (Left$(memNote, 4) = "READ")
-                    
-                    If isRead Then
-                        ' Reads don't change memory; keep the read value visible.
-                        memAfter = ""
-                    Else
-                        ' Writes: hide if no change
-                        If memBefore = memAfter Then
-                            memAddrHex = "": memBefore = "": memAfter = "": memNote = ""
-                        End If
-                    End If
-                ElseIf memTrackLen = 2 Then
-                    a0 = gMemory.addr(memAddrDec) And 255
-                    a1 = gMemory.addr((memAddrDec + 1) And &HFFFF&) And 255
-                    memAfter = Right$("00" & hex$(a0), 2) & " " & Right$("00" & hex$(a1), 2)
-            
-                    isRead = (Left$(memNote, 4) = "READ")
-                    
-                    If isRead Then
-                        ' Reads don't change memory; keep the read value visible.
-                        memAfter = ""
-                    Else
-                        ' Writes: hide if no change
-                        If memBefore = memAfter Then
-                            memAddrHex = "": memBefore = "": memAfter = "": memNote = ""
-                        End If
-                    End If
-                End If
-            
-                ' Append trace row (post-state + optional memory delta)
-                TraceAppend myCpu, pc_dec, opcode, op1, op2, errcode, memAddrHex, memBefore, memAfter, memNote
-            
-                If stepMode And TraceLive() Then TraceFlush
-            End If
 
-            If errcode = ERR_EXEC_END Then
+            If errcode = -200 Then
                 endedByEnd = True
                 Exit Do
             End If
 
-            If errcode = ERR_BAD_OPCODE Then
+            If errcode = -9999 Then
                 Range("Error").value = errcode
                 Range("errMessage").value = "Error: Invalid OpCode: " & opcode & " at Line " & pc_dec
                 Exit Do
             End If
 
+            executedThisIter = True
         End If
 
         ' Advance PC only after processing this row (consistent with your existing design)
@@ -3913,10 +3493,12 @@ Public Sub decExecute()
         End If
 
         ' Update row index for next fetch
+        rowIdx = pc_dec - line0_dec '
         rowIdx = myCpu.GetCurrentIdx
         If rowIdx < 0 Or rowIdx >= ubRows_Opcode Then Exit Do
 
         opcode = CStr(arrOpcode(rowIdx + 1, 1))
+        Set curRow = base.offset(rowIdx, 0)
 
         ' In step mode, only count the step if an instruction executed
         If stepMode And executedThisIter Then
@@ -3949,7 +3531,7 @@ Public Sub decExecute()
 
 ExecFinalize:
     ' ========= Finalization =========
-    If headless Or stepMode Or gBreak Then
+    If headless Or stepMode Then
         Application.Calculation = prevCalc
         Application.EnableEvents = True
         Application.ScreenUpdating = True
@@ -3959,6 +3541,7 @@ ExecFinalize:
             RefreshFlags myCpu
             myCpu.RefreshStack True
         Else
+            'Range("PC").value = usrFastHex(myCpu.Reg("PC"))
             Range("PC").value = usrFastHex(myCpu.Reg("PC"))
         End If
 
@@ -3966,13 +3549,8 @@ ExecFinalize:
         Range("consoleText") = usrForm.tbConsole.value
     End If
 
-    If TraceEnabled() Then TraceFlush
-    
     ' Show "Execution Complete" ONLY when END was encountered
-    If gBreak Then
-        Range("errMessage") = "Break at Line " & pc_dec
-        Range("Reset").value = 0
-    ElseIf endedByEnd Then
+    If endedByEnd Then
         Range("errMessage") = "Execution Complete"
     End If
 End Sub
@@ -4091,44 +3669,6 @@ Public Sub BTN_Step()
         .Range("Reset").value = 0
     End With
 End Sub
-Public Sub ForceCompile(Optional ByVal compile As Boolean = False)
-    Dim base As Range
-    Dim ofs_opcode As Long
-    Dim memSize As Long
-    Dim arrOpcode As Variant
-    Dim EMPTY_RUN_LIMIT As Long: EMPTY_RUN_LIMIT = 8
-    Dim emptyRuns As Long
-    Dim opcode As String
-    
-    If compile Then
-        Assemble8080_ToMachine
-        Exit Sub
-    End If
-    ofs_opcode = Range("ofs_opcode").value
-    Set base = Range("Line0").offset(0, ofs_opcode)
-    memSize = usrHexToDec(Range("MemSize").value)
-    arrOpcode = base.Resize(memSize, 1).value
-    
-    Dim i As Long
-    i = 1
-    emptyRuns = 0
-    Do While i <= memSize And Not compile And (emptyRuns < EMPTY_RUN_LIMIT)
-        opcode = arrOpcode(i, 1)
-        'If opcode = "DB" Or opcode = "DS" Then
-        If opcode = "DB" Then
-            compile = True
-        End If
-        If opcode = "" Then
-            emptyRuns = emptyRuns + 1
-        Else
-            emptyRuns = 0
-        End If
-        i = i + 1
-    Loop
-    If compile Then
-        Assemble8080_ToMachine
-    End If
-End Sub
 '================================================================================
 ' Module:       decAssemble
 '================================================================================
@@ -4175,11 +3715,14 @@ Public Sub Assemble8080_ToMachine()
     Set myMemory = gMemory
     ' Offsets into the CPU program grid (named ranges)
     Dim ofsLabel As Long, ofsOpcode As Long, ofsOp1 As Long, ofsOp2 As Long
+    'Dim ofsMem As Long
+    Dim ofsRowStat As Long
 
     ofsLabel = CLng(wsCPU.Range("ofs_label").value)
     ofsOpcode = CLng(wsCPU.Range("ofs_opcode").value)
     ofsOp1 = CLng(wsCPU.Range("ofs_op1").value)
     ofsOp2 = CLng(wsCPU.Range("ofs_op2").value)
+    ofsRowStat = CLng(wsCPU.Range("ofs_rowstat").value)
     gMemTableCol = CLng(wsCPU.Range("MemoryTableAddress").Column)
     
 
@@ -4276,21 +3819,6 @@ Public Sub Assemble8080_ToMachine()
                 End If
                 bytesOut = StringToBytesVariant(CStr(cur.offset(0, ofsOp1).value))
 
-            Case "DS"
-                Dim ds As Long
-                Dim i As Long
-                If Not IsValidHexSafe(cur.offset(0, ofsOp1).value) Then
-                     RaiseAsmError wsCPU, "DS Invalid DS Length", cur
-                    Exit Sub
-                End If
-                ds = HexToDecSafe(cur.offset(0, ofsOp1).value)
-                Dim out() As Variant
-                ReDim out(0 To ds - 1)
-                For i = 1 To ds
-                    out(i - 1) = 255
-                Next i
-                bytesOut = out
-                    
             Case Else
                 ' Normal instruction: lookup + encode (1/2/3 bytes)
                 Dim info As Variant
@@ -4326,19 +3854,16 @@ End Sub
 ' Memory emit: PC -> row/col within AB..AI and base address into column Z
 ' =============================================================================
 Private Sub EmitBytesToMemoryTable(ByVal wsCPU As Worksheet, _
- ByVal rngMem As Range, _
- ByVal memStartDec As Long, _
- ByVal startAddrDec As Long, _
- ByVal bytesOut As Variant, _
- ByRef myMem As clsMemory)
+                                  ByVal rngMem As Range, _
+                                  ByVal memStartDec As Long, _
+                                  ByVal startAddrDec As Long, _
+                                  ByVal bytesOut As Variant, _
+                                  ByRef myMem As clsMemory)
+                                  
 
+    Dim asciiString As String
+    asciiString = ""
     Dim i As Long
-    Dim baseAddr As Long
-    Dim lastTargetRow As Long
-
-    lastTargetRow = 0
-    baseAddr = memStartDec
-
     For i = LBound(bytesOut) To UBound(bytesOut)
 
         Dim addr As Long
@@ -4357,18 +3882,18 @@ Private Sub EmitBytesToMemoryTable(ByVal wsCPU As Worksheet, _
         targetCol = 1 + colIndex
 
         If targetRow > rngMem.Rows.Count Then Exit Sub
-        If targetCol > rngMem.Columns.Count Then Exit Sub
+        If targetCol > rngMem.Columns.Count Then Exit Sub ' should be 8
 
+        ' Write byte as 2-digit hex into AB..AI
         rngMem.Cells(targetRow, targetCol).value = Right$("00" & hex$(CLng(bytesOut(i)) And &HFF&), 2)
         myMem.addr(addr) = CLng(bytesOut(i)) And &HFF&
-
+        
+        ' Write base address into column Z for that MemoryTable row
+        Dim baseAddr As Long
         baseAddr = memStartDec + (rowIndex * BYTES_PER_MEMROW)
-        lastTargetRow = targetRow
-    Next i
 
-    If lastTargetRow > 0 Then
-        wsCPU.Cells(rngMem.row + (lastTargetRow - 1), gMemTableCol).value = Right$("0000" & hex$(baseAddr), 4)
-    End If
+    Next i
+        wsCPU.Cells(rngMem.row + (targetRow - 1), gMemTableCol).value = Right$("0000" & hex$(baseAddr), 4)
 
 End Sub
 
@@ -4412,7 +3937,7 @@ Public Function BuildOpcodeMap(ByVal wsOp As Worksheet) As Object
         key = mnem & "|" & spec1 & "|" & spec2
 
         If Not dict.Exists(key) Then
-            dict.ADD key, Array(opByte, bytes, spec1, spec2)
+            dict.add key, Array(opByte, bytes, spec1, spec2)
         End If
 
 ContinueRow:
@@ -4711,18 +4236,20 @@ End Function
 Public Property Get addr(ByVal memAddr As Long) As Byte
     Dim offset As Long
     offset = memAddr - pStartAddress
-    If offset < 0 Or offset > pMemSize Then
-        addr = 0
-    Else
+    If offset < pMemSize Then
         addr = pMemory(offset)
+    Else
+        addr = 0
     End If
 End Property
+
 
 Public Property Let addr(ByVal memAddr As Long, ByVal value As Byte)
     Dim offset As Long
     offset = memAddr - pStartAddress
-    If offset < 0 Or offset > pMemSize Then Exit Property
-    pMemory(offset) = value
+    If offset < pMemSize Then
+        pMemory(offset) = value
+    End If
 End Property
 
 Public Function StartAddress() As Long
@@ -4811,7 +4338,7 @@ Public Sub ParseAddresses()
             emptyRun = 0
         End If
         
-        If opcode = "EQU" Or opcode = "ORG" Then
+        If opcode = "EQU" Then
             GoTo NextRow
         End If
         
@@ -4832,7 +4359,7 @@ Public Sub ParseAddresses()
             nodeRec.clsAddressNext = CLng(data(r + 1, 1))
         End If
         nodeRec.clsIndex = r - 1
-        pNodes.ADD addr_dec, nodeRec
+        pNodes.add addr_dec, nodeRec
         addr_previous = addr_dec
 
 NextRow:
@@ -4856,254 +4383,3 @@ Public Function Size() As Long
 End Function
 
 
-
-''' Component: Sheet7
-''' [No code]
-
-''' Component: Trace
-Option Explicit
-
-'=========================
-' Trace mode (buffered)
-'=========================
-Private Const TRACE_BATCH As Long = 500          ' grow buffer in chunks
-Private Const TRACE_MAX_ROWS As Long = 20000     ' hard cap safety
-
-Private gTraceArr() As Variant                  ' 2D array buffer
-Private gTraceCount As Long                     ' total entries captured
-Private gTraceWritten As Long                   ' how many entries flushed to sheet
-Private gHeadersWritten As Boolean
-
-' Columns (fixed order)
-'  1 Step#
-'  2 PC
-'  3 Op
-'  4 OP1
-'  5 OP2
-'  6 A
-'  7 B
-'  8 C
-'  9 D
-' 10 E
-' 11 H
-' 12 L
-' 13 SP
-' 14 S
-' 15 Z
-' 16 P
-' 17 CY
-' 18 AC
-' 19 Err
-'20 memAddr
-'21 MemBefore
-'22 MemAfter
-'23 MemNote
-Private Const TRACE_COLS As Long = 23
-
-Public Function TraceEnabled() As Boolean
-    ' Controlled by CPU!Trace (named range). Missing range => False.
-    On Error Resume Next
-    TraceEnabled = (CLng(ThisWorkbook.Worksheets("CPU").Range("Trace").value) = 1)
-    If Err.Number <> 0 Then TraceEnabled = False
-    On Error GoTo 0
-End Function
-
-Public Function TraceLive() As Boolean
-    ' Optional CPU!TraceLive (named range). Missing => False.
-    On Error Resume Next
-    TraceLive = (CLng(ThisWorkbook.Worksheets("CPU").Range("TraceLive").value) = 1)
-    If Err.Number <> 0 Then TraceLive = False
-    On Error GoTo 0
-End Function
-Public Function TraceMemReads() As Boolean
-    On Error Resume Next
-    TraceMemReads = (CLng(ThisWorkbook.Worksheets("CPU").Range("TraceMemReads").value) = 1)
-    If Err.Number <> 0 Then TraceMemReads = False
-    On Error GoTo 0
-End Function
-Public Sub TraceClear()
-    gTraceCount = 0
-    gTraceWritten = 0
-    gHeadersWritten = False
-    Erase gTraceArr
-
-    Dim ws As Worksheet
-    Set ws = TraceGetSheet(True)
-    ws.Cells.Clear
-End Sub
-
-Private Function TraceGetSheet(Optional ByVal createIfMissing As Boolean = True) As Worksheet
-    On Error Resume Next
-    Set TraceGetSheet = ThisWorkbook.Worksheets("Trace")
-    On Error GoTo 0
-
-    If TraceGetSheet Is Nothing And createIfMissing Then
-        Set TraceGetSheet = ThisWorkbook.Worksheets.ADD(After:=ThisWorkbook.Sheets(ThisWorkbook.Sheets.Count))
-        TraceGetSheet.name = "Trace"
-    End If
-End Function
-
-Private Sub TraceEnsureHeaders()
-    If gHeadersWritten Then Exit Sub
-
-    Dim ws As Worksheet
-    Set ws = TraceGetSheet(True)
-
-    Dim headers As Variant
-    headers = Array("Step", "PC", "Op", "OP1", "OP2", _
-                    "A", "B", "C", "D", "E", "H", "L", "SP", _
-                    "S", "Z", "P", "CY", "AC", "Err", _
-                    "MemAddr", "MemBefore", "MemAfter", "MemNote")
-
-    ws.Range("A1").Resize(1, UBound(headers) + 1).value = headers
-    ws.Rows(1).Font.Bold = True
-
-    ws.Columns("A").ColumnWidth = 8
-    ws.Columns("B").ColumnWidth = 6
-    ws.Columns("C").ColumnWidth = 8
-    ws.Columns("D:E").ColumnWidth = 10
-    ws.Columns("F:M").ColumnWidth = 4
-    ws.Columns("N:S").ColumnWidth = 4
-    ws.Columns("T").ColumnWidth = 8   ' MemAddr
-    ws.Columns("U:V").ColumnWidth = 10 ' before/after
-    ws.Columns("W").ColumnWidth = 28  ' note
-    ws.Columns("T:W").NumberFormat = "@"
-    
-    ' Keep hex-looking fields as text (prevents Excel auto-formatting)
-    ws.Columns("B").NumberFormat = "@"
-    ws.Columns("F:M").NumberFormat = "@"
-
-    gHeadersWritten = True
-End Sub
-
-Private Sub TraceEnsureCapacity(ByVal neededRow As Long)
-    Dim curRows As Long
-
-    ' If the array is not allocated yet, UBound will error.
-    On Error Resume Next
-    curRows = UBound(gTraceArr, 1)
-    If Err.Number <> 0 Then
-        Err.Clear
-        ReDim gTraceArr(1 To TRACE_BATCH, 1 To TRACE_COLS)
-        Exit Sub
-    End If
-    On Error GoTo 0
-
-    If neededRow <= curRows Then Exit Sub
-
-    ReDim Preserve gTraceArr(1 To (curRows + TRACE_BATCH), 1 To TRACE_COLS)
-End Sub
-
-Private Function Hex2(ByVal v As Long) As String
-    Hex2 = Right$("00" & hex$(v And 255), 2)
-End Function
-
-Private Function Hex4(ByVal v As Long) As String
-    Hex4 = Right$("0000" & hex$(v And &HFFFF&), 4)
-End Function
-
-Public Sub TraceAppend(ByRef cpu As clsDecCPU, _
-                       ByVal pc_dec As Long, _
-                       ByVal opcode As String, _
-                       ByVal op1 As String, _
-                       ByVal op2 As String, _
-                       ByVal errcode As Long, _
-                       Optional ByVal memAddr As String = "", _
-                       Optional ByVal memBefore As String = "", _
-                       Optional ByVal memAfter As String = "", _
-                       Optional ByVal memNote As String = "")
-                       
-    If Not TraceEnabled() Then Exit Sub
-    If gTraceCount >= TRACE_MAX_ROWS Then Exit Sub
-
-    TraceEnsureHeaders
-
-    gTraceCount = gTraceCount + 1
-    TraceEnsureCapacity gTraceCount
-
-    Dim r As Long: r = gTraceCount
-
-    gTraceArr(r, 1) = r
-    gTraceArr(r, 2) = Hex4(pc_dec)
-    gTraceArr(r, 3) = opcode
-    gTraceArr(r, 4) = op1
-    gTraceArr(r, 5) = op2
-
-    gTraceArr(r, 6) = Hex2(cpu.Reg("A"))
-    gTraceArr(r, 7) = Hex2(cpu.Reg("B"))
-    gTraceArr(r, 8) = Hex2(cpu.Reg("C"))
-    gTraceArr(r, 9) = Hex2(cpu.Reg("D"))
-    gTraceArr(r, 10) = Hex2(cpu.Reg("E"))
-    gTraceArr(r, 11) = Hex2(cpu.Reg("H"))
-    gTraceArr(r, 12) = Hex2(cpu.Reg("L"))
-    gTraceArr(r, 13) = Hex4(cpu.Reg("SP"))
-
-    gTraceArr(r, 14) = cpu.Flag("Sign")
-    gTraceArr(r, 15) = cpu.Flag("Zero")
-    gTraceArr(r, 16) = cpu.Flag("Parity")
-    gTraceArr(r, 17) = cpu.Flag("Carry")
-    gTraceArr(r, 18) = cpu.Flag("AC")
-
-    gTraceArr(r, 19) = errcode
-    
-    gTraceArr(r, 20) = memAddr
-    gTraceArr(r, 21) = memBefore
-    gTraceArr(r, 22) = memAfter
-    gTraceArr(r, 23) = memNote
-End Sub
-
-Public Sub TraceFlush(Optional ByVal forceAll As Boolean = False)
-    If Not TraceEnabled() Then Exit Sub
-    If gTraceCount = 0 Then Exit Sub
-
-    TraceEnsureHeaders
-
-    Dim ws As Worksheet
-    Set ws = TraceGetSheet(True)
-
-    Dim startRow As Long, rowsToWrite As Long
-    If forceAll Then
-        gTraceWritten = 0
-    End If
-
-    rowsToWrite = gTraceCount - gTraceWritten
-    If rowsToWrite <= 0 Then Exit Sub
-
-    startRow = 2 + gTraceWritten
-
-    ws.Range("A" & startRow).Resize(rowsToWrite, TRACE_COLS).value = _
-        wsParentSlice(gTraceArr, gTraceWritten + 1, gTraceCount, TRACE_COLS)
-
-    gTraceWritten = gTraceCount
-End Sub
-
-' Helper: slice a 2D array [r1..r2, 1..cols] into a new 2D array
-Private Function wsParentSlice(ByRef src As Variant, ByVal r1 As Long, ByVal r2 As Long, ByVal cols As Long) As Variant
-    Dim out As Variant
-    Dim rr As Long, cc As Long, rOut As Long
-    ReDim out(1 To (r2 - r1 + 1), 1 To cols)
-    rOut = 0
-    For rr = r1 To r2
-        rOut = rOut + 1
-        For cc = 1 To cols
-            out(rOut, cc) = src(rr, cc)
-        Next cc
-    Next rr
-    wsParentSlice = out
-End Function
-
-' Convenience button macros
-Public Sub BTN_ClearTrace()
-    TraceClear
-End Sub
-
-Public Sub BTN_FlushTrace()
-    TraceFlush True
-End Sub
-
-
-''' Component: Sheet6
-''' [No code]
-
-''' Component: Sheet9
-''' [No code]

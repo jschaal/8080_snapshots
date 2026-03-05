@@ -1,0 +1,7 @@
+Group,Total,Implemented,Covered,Impl%,Cov%
+Arithmetic,16,16,15,100.0,93.8
+Branch,26,26,12,100.0,46.2
+Data transfer,10,10,4,100.0,40.0
+I/O & machine,9,7,6,77.8,66.7
+Logical/bit,13,13,13,100.0,100.0
+Stack,4,4,3,100.0,75.0

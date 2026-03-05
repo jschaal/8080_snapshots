@@ -1,5 +1,5 @@
 === VBA EXPORT: 8080 Model Current.xlsm ===
-Timestamp: 3/5/2026 8:11:53 AM
+Timestamp: 3/3/2026 4:46:31 AM
 ================================================================================
 
 ''' Component: ThisWorkbook
@@ -310,8 +310,6 @@ Public Sub RunDynamicTests()
     Dim resultsCol As Long, runCol As Long, compileCol As Long
     Dim overrideStepMode As Boolean
     Dim overrideReset As Boolean
-    Dim overrideTrace As Boolean
-    Dim overrideSkipBreaks As Boolean
     Dim compileThis As Boolean
 
     Set wsTest = Sheets("Unit Tests")
@@ -331,15 +329,7 @@ Public Sub RunDynamicTests()
     If overrideReset Then
         Range("Reset") = 1
     End If
-    overrideTrace = Range("Trace") = 1
-    If overrideTrace Then
-        Range("Trace") = 0
-    End If
-    overrideSkipBreaks = Range("SkipBreaks") = 0
-    If overrideSkipBreaks Then
-        Range("SkipBreaks") = 1
-    End If
-    
+
     ' Honor your Run flag column again
     runCol = wsTest.Range("RunTest").Column
     compileCol = wsTest.Range("CompileTest").Column
@@ -433,12 +423,6 @@ Public Sub RunDynamicTests()
     End If
     If overrideReset Then
         Range("Reset") = 0
-    End If
-    If overrideTrace Then
-        Range("Trace") = 1
-    End If
-    If overrideSkipBreaks Then
-        Range("SkipBreaks") = 0
     End If
 
     Dim finalMsg As String
@@ -1184,7 +1168,7 @@ Public Function RunOpcode(ByVal opcode As String, _
         Case "CALL": result = Me.CALL_(op1, op2)         ' 160xx error base inside
         Case "DB":   result = 0                              ' data pseudo-op
         Case "EQU":  result = Me.EQU(op1, label)
-        Case "END":  result = ERR_EXEC_END                ' soft termination
+        Case "END":  result = -200                           ' soft termination
         Case "DCR":  result = Me.DCR(op1)                 ' 230xx
         Case "HLT":  result = Me.HLT()                    ' -100
         Case "IN":   result = Me.IN_(op1)                 ' 270xx
@@ -2918,8 +2902,7 @@ Public Function GetInput() As Long
     Dim addr As Long
     Dim addr_high As Long, addr_low As Long
     Dim i As Long
-    'inputStr = InputBox("Enter Text:", "Console Input")
-    inputStr = usrForm.tbInput.value
+    inputStr = InputBox("Enter Text:", "Console Input")
     If inputStr <> "" Then
         addr_high = pRegs("H")
         addr_low = pRegs("L")
@@ -3301,19 +3284,6 @@ Public Function SmartDelay(ByVal centiSeconds As Long)
     Loop
     SmartDelay = 0
 End Function
-Public Function HasUnitTest(instring As String) As Boolean
-    Dim ws As Worksheet, r As Range
-    Set ws = Sheets("Unit Tests")
-    For Each r In ws.Range("A:A")
-        If r.value Like "Unit_*" Then
-            If InStr(1, CStr(ws.Cells(r.row, "E").value), instring, vbTextCompare) > 0 Then
-                HasUnitTest = True
-                Exit Function
-            End If
-        End If
-    Next
-    HasUnitTest = False
-End Function
 '================================================================================
 ' Module:       modGlobals
 '================================================================================
@@ -3483,8 +3453,7 @@ Private gArrRowStat As Variant
 Private gArrOp1 As Variant
 Private gArrOp2 As Variant
 Private gArrLabel As Variant
-Private gBreak As Boolean
-    
+
 Private Sub InvalidateCodeCache()
     gCacheValid = False
 End Sub
@@ -3517,8 +3486,6 @@ Public Sub decExecute()
     Dim stepTaken As Boolean
     Dim executedThisIter As Boolean
     Dim endedByEnd As Boolean
-    Dim skipBreaks As Boolean
-    Dim traceReads As Boolean
 
     ' --- Cached arrays mapped into locals for the run ---
     Dim base As Range, line0_dec As Long
@@ -3528,11 +3495,6 @@ Public Sub decExecute()
 
     Dim rowIdx As Long
 
-    Dim memAddrDec As Long
-    Dim memBefore As String, memAfter As String, memAddrHex As String, memNote As String
-    Dim memTrackLen As Long
-    Dim preHL As Long, preSP As Long
-    Dim b0 As Long, b1 As Long, a0 As Long, a1 As Long
     ' ========= Initialization =========
     InitHexTable
 
@@ -3545,8 +3507,6 @@ Public Sub decExecute()
     debugMode = (Range("Debug").value = 1)
     stepMode = (Range("Step").value = 1)
     Reset = Range("Reset").value
-    skipBreaks = Range("SkipBreaks") = 1
-    traceReads = TraceMemReads()
 
     errcode = 0
     endedByEnd = False
@@ -3573,13 +3533,11 @@ Public Sub decExecute()
     ' ========= Reset / continuation =========
     If Reset = 1 Then
         ' Fresh run / Step Start: reset CPU and rebuild cache
-        If TraceEnabled() Then TraceClear
         ForceCompile (False)
         ResetAddressList
         ResetDecCPU
         Set myCpu = gDecCPU
         InvalidateCodeCache
-        gBreak = False
 
         mConsoleOpen = False
         pc_dec = CLng(Range("Line0_dec").value)
@@ -3685,15 +3643,6 @@ Public Sub decExecute()
         If UCase$(op2) <> "EQU" Then op2 = UCase$(op2)
 
         rowStat = CStr(arrRowStat(rowIdx + 1, 1))
-        ' Check for code breaks; override in testrunner to have no breaks
-        If rowStat = "B" And Not stepMode And Not skipBreaks Then
-            If gBreak Then
-                gBreak = False
-            Else
-                gBreak = True
-                Exit Do
-            End If
-        End If
 
         executedThisIter = False
 
@@ -3708,191 +3657,7 @@ Public Sub decExecute()
                 Debug.Assert Not debugMode
             End If
 
-            ' --- Trace memory sampling (before) ---
-            memAddrHex = "": memBefore = "": memAfter = "": memNote = ""
-            memTrackLen = 0
-            memAddrDec = 0
-            
-            If TraceEnabled() Then
-                ' Snapshot pre-state for address calculations
-                preHL = ((myCpu.Reg("H") And 255) * 256&) + (myCpu.Reg("L") And 255)
-                preSP = (myCpu.Reg("SP") And &HFFFF&)
-            
-                Select Case opcode
-            
-                    ' ===== M-operand writes (HL indirect) =====
-                    Case "MOV"
-                        If UCase$(op1) = "M" Then
-                            memAddrDec = preHL
-                            memTrackLen = 1
-                        End If
-            
-                    Case "MVI", "INR", "DCR"
-                        If UCase$(op1) = "M" Then
-                            memAddrDec = preHL
-                            memTrackLen = 1
-                        End If
-            
-                    ' ===== Direct memory writes =====
-                    Case "STA"
-                        If usrIsValidHex(op1) Then
-                            memAddrDec = usrHexToDec(op1) And &HFFFF&
-                            memTrackLen = 1
-                        Else
-                            memNote = "STA addr token=" & op1
-                        End If
-            
-                    Case "SHLD"
-                        If usrIsValidHex(op1) Then
-                            memAddrDec = usrHexToDec(op1) And &HFFFF&
-                            memTrackLen = 2
-                        Else
-                            memNote = "SHLD addr token=" & op1
-                        End If
-            
-                    ' ===== Stack writes =====
-                    Case "PUSH"
-                        memAddrDec = (preSP - 2) And &HFFFF&
-                        memTrackLen = 2
-                        memNote = "PUSH writes SP-2..SP-1"
-            
-                    Case "CALL", "CC", "CNC", "CNZ", "CZ", "CP", "CM", "CPE", "CPO"
-                        ' Conditional calls only write if taken; we’ll detect by before/after diff
-                        memAddrDec = (preSP - 2) And &HFFFF&
-                        memTrackLen = 2
-                        memNote = "CALL writes SP-2..SP-1 (if taken)"
-            
-                    ' ===== XTHL swaps stack top =====
-                    Case "XTHL"
-                        memAddrDec = preSP
-                        memTrackLen = 2
-                        memNote = "XTHL swaps (SP),(SP+1)"
-            
-                End Select
-                
-                ' ===== Memory reads (optional) =====
-                If memTrackLen = 0 And traceReads Then
-                
-                    Select Case opcode
-                
-                        ' MOV r, M  (read from (HL))
-                        Case "MOV"
-                            If UCase$(op2) = "M" Then
-                                memAddrDec = preHL
-                                memTrackLen = 1
-                                memNote = "READ (HL)"
-                            End If
-                
-                        ' ALU/LOGIC using M (read from (HL))
-                        Case "ADD", "ADC", "SUB", "SBB", "ANA", "XRA", "ORA", "CMP"
-                            If UCase$(op1) = "M" Then
-                                memAddrDec = preHL
-                                memTrackLen = 1
-                                memNote = "READ (HL)"
-                            End If
-                
-                        ' Direct reads
-                        Case "LDA"
-                            If usrIsValidHex(op1) Then
-                                memAddrDec = usrHexToDec(op1) And &HFFFF&
-                                memTrackLen = 1
-                                memNote = "READ (addr)"
-                            Else
-                                memNote = "READ LDA addr token=" & op1
-                            End If
-                
-                        Case "LHLD"
-                            If usrIsValidHex(op1) Then
-                                memAddrDec = usrHexToDec(op1) And &HFFFF&
-                                memTrackLen = 2
-                                memNote = "READ16 (addr)"
-                            Else
-                                memNote = "READ LHLD addr token=" & op1
-                            End If
-                
-                        ' Indirect reads via BC/DE
-                        Case "LDAX"
-                            If UCase$(op1) = "B" Then
-                                memAddrDec = ((myCpu.Reg("B") And 255) * 256&) + (myCpu.Reg("C") And 255)
-                                memTrackLen = 1
-                                memNote = "READ (BC)"
-                            ElseIf UCase$(op1) = "D" Then
-                                memAddrDec = ((myCpu.Reg("D") And 255) * 256&) + (myCpu.Reg("E") And 255)
-                                memTrackLen = 1
-                                memNote = "READ (DE)"
-                            End If
-                
-                        ' Stack reads
-                        Case "POP"
-                            memAddrDec = preSP
-                            memTrackLen = 2
-                            memNote = "READ16 (SP) POP"
-                
-                        Case "RET", "RNZ", "RZ", "RC", "RNC", "RP", "RM", "RPE", "RPO"
-                            memAddrDec = preSP
-                            memTrackLen = 2
-                            memNote = "READ16 (SP) RET* (if taken)"
-                    End Select
-                
-                End If
-            
-                ' Read BEFORE bytes if we have an address
-                If memTrackLen = 1 Then
-                    b0 = gMemory.addr(memAddrDec) And 255
-                    memBefore = Right$("00" & hex$(b0), 2)
-                    memAddrHex = Right$("0000" & hex$(memAddrDec), 4)
-                ElseIf memTrackLen = 2 Then
-                    b0 = gMemory.addr(memAddrDec) And 255
-                    b1 = gMemory.addr((memAddrDec + 1) And &HFFFF&) And 255
-                    memBefore = Right$("00" & hex$(b0), 2) & " " & Right$("00" & hex$(b1), 2)
-                    memAddrHex = Right$("0000" & hex$(memAddrDec), 4)
-                End If
-            End If
-            
             errcode = myCpu.RunOpcode(opcode, op1, op2, label)
-            executedThisIter = True
-            
-            If TraceEnabled() Then
-                ' Read AFTER bytes for tracked address and include only if changed
-                Dim isRead As Boolean
-                If memTrackLen = 1 Then
-                    a0 = gMemory.addr(memAddrDec) And 255
-                    memAfter = Right$("00" & hex$(a0), 2)
-            
-                    isRead = (Left$(memNote, 4) = "READ")
-                    
-                    If isRead Then
-                        ' Reads don't change memory; keep the read value visible.
-                        memAfter = ""
-                    Else
-                        ' Writes: hide if no change
-                        If memBefore = memAfter Then
-                            memAddrHex = "": memBefore = "": memAfter = "": memNote = ""
-                        End If
-                    End If
-                ElseIf memTrackLen = 2 Then
-                    a0 = gMemory.addr(memAddrDec) And 255
-                    a1 = gMemory.addr((memAddrDec + 1) And &HFFFF&) And 255
-                    memAfter = Right$("00" & hex$(a0), 2) & " " & Right$("00" & hex$(a1), 2)
-            
-                    isRead = (Left$(memNote, 4) = "READ")
-                    
-                    If isRead Then
-                        ' Reads don't change memory; keep the read value visible.
-                        memAfter = ""
-                    Else
-                        ' Writes: hide if no change
-                        If memBefore = memAfter Then
-                            memAddrHex = "": memBefore = "": memAfter = "": memNote = ""
-                        End If
-                    End If
-                End If
-            
-                ' Append trace row (post-state + optional memory delta)
-                TraceAppend myCpu, pc_dec, opcode, op1, op2, errcode, memAddrHex, memBefore, memAfter, memNote
-            
-                If stepMode And TraceLive() Then TraceFlush
-            End If
 
             If errcode = ERR_EXEC_END Then
                 endedByEnd = True
@@ -3905,6 +3670,7 @@ Public Sub decExecute()
                 Exit Do
             End If
 
+            executedThisIter = True
         End If
 
         ' Advance PC only after processing this row (consistent with your existing design)
@@ -3949,7 +3715,7 @@ Public Sub decExecute()
 
 ExecFinalize:
     ' ========= Finalization =========
-    If headless Or stepMode Or gBreak Then
+    If headless Or stepMode Then
         Application.Calculation = prevCalc
         Application.EnableEvents = True
         Application.ScreenUpdating = True
@@ -3959,6 +3725,7 @@ ExecFinalize:
             RefreshFlags myCpu
             myCpu.RefreshStack True
         Else
+            'Range("PC").value = usrFastHex(myCpu.Reg("PC"))
             Range("PC").value = usrFastHex(myCpu.Reg("PC"))
         End If
 
@@ -3966,13 +3733,8 @@ ExecFinalize:
         Range("consoleText") = usrForm.tbConsole.value
     End If
 
-    If TraceEnabled() Then TraceFlush
-    
     ' Show "Execution Complete" ONLY when END was encountered
-    If gBreak Then
-        Range("errMessage") = "Break at Line " & pc_dec
-        Range("Reset").value = 0
-    ElseIf endedByEnd Then
+    If endedByEnd Then
         Range("errMessage") = "Execution Complete"
     End If
 End Sub
@@ -4114,8 +3876,7 @@ Public Sub ForceCompile(Optional ByVal compile As Boolean = False)
     emptyRuns = 0
     Do While i <= memSize And Not compile And (emptyRuns < EMPTY_RUN_LIMIT)
         opcode = arrOpcode(i, 1)
-        'If opcode = "DB" Or opcode = "DS" Then
-        If opcode = "DB" Then
+        If opcode = "DB" Or opcode = "DS" Then
             compile = True
         End If
         If opcode = "" Then
@@ -4858,252 +4619,4 @@ End Function
 
 
 ''' Component: Sheet7
-''' [No code]
-
-''' Component: Trace
-Option Explicit
-
-'=========================
-' Trace mode (buffered)
-'=========================
-Private Const TRACE_BATCH As Long = 500          ' grow buffer in chunks
-Private Const TRACE_MAX_ROWS As Long = 20000     ' hard cap safety
-
-Private gTraceArr() As Variant                  ' 2D array buffer
-Private gTraceCount As Long                     ' total entries captured
-Private gTraceWritten As Long                   ' how many entries flushed to sheet
-Private gHeadersWritten As Boolean
-
-' Columns (fixed order)
-'  1 Step#
-'  2 PC
-'  3 Op
-'  4 OP1
-'  5 OP2
-'  6 A
-'  7 B
-'  8 C
-'  9 D
-' 10 E
-' 11 H
-' 12 L
-' 13 SP
-' 14 S
-' 15 Z
-' 16 P
-' 17 CY
-' 18 AC
-' 19 Err
-'20 memAddr
-'21 MemBefore
-'22 MemAfter
-'23 MemNote
-Private Const TRACE_COLS As Long = 23
-
-Public Function TraceEnabled() As Boolean
-    ' Controlled by CPU!Trace (named range). Missing range => False.
-    On Error Resume Next
-    TraceEnabled = (CLng(ThisWorkbook.Worksheets("CPU").Range("Trace").value) = 1)
-    If Err.Number <> 0 Then TraceEnabled = False
-    On Error GoTo 0
-End Function
-
-Public Function TraceLive() As Boolean
-    ' Optional CPU!TraceLive (named range). Missing => False.
-    On Error Resume Next
-    TraceLive = (CLng(ThisWorkbook.Worksheets("CPU").Range("TraceLive").value) = 1)
-    If Err.Number <> 0 Then TraceLive = False
-    On Error GoTo 0
-End Function
-Public Function TraceMemReads() As Boolean
-    On Error Resume Next
-    TraceMemReads = (CLng(ThisWorkbook.Worksheets("CPU").Range("TraceMemReads").value) = 1)
-    If Err.Number <> 0 Then TraceMemReads = False
-    On Error GoTo 0
-End Function
-Public Sub TraceClear()
-    gTraceCount = 0
-    gTraceWritten = 0
-    gHeadersWritten = False
-    Erase gTraceArr
-
-    Dim ws As Worksheet
-    Set ws = TraceGetSheet(True)
-    ws.Cells.Clear
-End Sub
-
-Private Function TraceGetSheet(Optional ByVal createIfMissing As Boolean = True) As Worksheet
-    On Error Resume Next
-    Set TraceGetSheet = ThisWorkbook.Worksheets("Trace")
-    On Error GoTo 0
-
-    If TraceGetSheet Is Nothing And createIfMissing Then
-        Set TraceGetSheet = ThisWorkbook.Worksheets.ADD(After:=ThisWorkbook.Sheets(ThisWorkbook.Sheets.Count))
-        TraceGetSheet.name = "Trace"
-    End If
-End Function
-
-Private Sub TraceEnsureHeaders()
-    If gHeadersWritten Then Exit Sub
-
-    Dim ws As Worksheet
-    Set ws = TraceGetSheet(True)
-
-    Dim headers As Variant
-    headers = Array("Step", "PC", "Op", "OP1", "OP2", _
-                    "A", "B", "C", "D", "E", "H", "L", "SP", _
-                    "S", "Z", "P", "CY", "AC", "Err", _
-                    "MemAddr", "MemBefore", "MemAfter", "MemNote")
-
-    ws.Range("A1").Resize(1, UBound(headers) + 1).value = headers
-    ws.Rows(1).Font.Bold = True
-
-    ws.Columns("A").ColumnWidth = 8
-    ws.Columns("B").ColumnWidth = 6
-    ws.Columns("C").ColumnWidth = 8
-    ws.Columns("D:E").ColumnWidth = 10
-    ws.Columns("F:M").ColumnWidth = 4
-    ws.Columns("N:S").ColumnWidth = 4
-    ws.Columns("T").ColumnWidth = 8   ' MemAddr
-    ws.Columns("U:V").ColumnWidth = 10 ' before/after
-    ws.Columns("W").ColumnWidth = 28  ' note
-    ws.Columns("T:W").NumberFormat = "@"
-    
-    ' Keep hex-looking fields as text (prevents Excel auto-formatting)
-    ws.Columns("B").NumberFormat = "@"
-    ws.Columns("F:M").NumberFormat = "@"
-
-    gHeadersWritten = True
-End Sub
-
-Private Sub TraceEnsureCapacity(ByVal neededRow As Long)
-    Dim curRows As Long
-
-    ' If the array is not allocated yet, UBound will error.
-    On Error Resume Next
-    curRows = UBound(gTraceArr, 1)
-    If Err.Number <> 0 Then
-        Err.Clear
-        ReDim gTraceArr(1 To TRACE_BATCH, 1 To TRACE_COLS)
-        Exit Sub
-    End If
-    On Error GoTo 0
-
-    If neededRow <= curRows Then Exit Sub
-
-    ReDim Preserve gTraceArr(1 To (curRows + TRACE_BATCH), 1 To TRACE_COLS)
-End Sub
-
-Private Function Hex2(ByVal v As Long) As String
-    Hex2 = Right$("00" & hex$(v And 255), 2)
-End Function
-
-Private Function Hex4(ByVal v As Long) As String
-    Hex4 = Right$("0000" & hex$(v And &HFFFF&), 4)
-End Function
-
-Public Sub TraceAppend(ByRef cpu As clsDecCPU, _
-                       ByVal pc_dec As Long, _
-                       ByVal opcode As String, _
-                       ByVal op1 As String, _
-                       ByVal op2 As String, _
-                       ByVal errcode As Long, _
-                       Optional ByVal memAddr As String = "", _
-                       Optional ByVal memBefore As String = "", _
-                       Optional ByVal memAfter As String = "", _
-                       Optional ByVal memNote As String = "")
-                       
-    If Not TraceEnabled() Then Exit Sub
-    If gTraceCount >= TRACE_MAX_ROWS Then Exit Sub
-
-    TraceEnsureHeaders
-
-    gTraceCount = gTraceCount + 1
-    TraceEnsureCapacity gTraceCount
-
-    Dim r As Long: r = gTraceCount
-
-    gTraceArr(r, 1) = r
-    gTraceArr(r, 2) = Hex4(pc_dec)
-    gTraceArr(r, 3) = opcode
-    gTraceArr(r, 4) = op1
-    gTraceArr(r, 5) = op2
-
-    gTraceArr(r, 6) = Hex2(cpu.Reg("A"))
-    gTraceArr(r, 7) = Hex2(cpu.Reg("B"))
-    gTraceArr(r, 8) = Hex2(cpu.Reg("C"))
-    gTraceArr(r, 9) = Hex2(cpu.Reg("D"))
-    gTraceArr(r, 10) = Hex2(cpu.Reg("E"))
-    gTraceArr(r, 11) = Hex2(cpu.Reg("H"))
-    gTraceArr(r, 12) = Hex2(cpu.Reg("L"))
-    gTraceArr(r, 13) = Hex4(cpu.Reg("SP"))
-
-    gTraceArr(r, 14) = cpu.Flag("Sign")
-    gTraceArr(r, 15) = cpu.Flag("Zero")
-    gTraceArr(r, 16) = cpu.Flag("Parity")
-    gTraceArr(r, 17) = cpu.Flag("Carry")
-    gTraceArr(r, 18) = cpu.Flag("AC")
-
-    gTraceArr(r, 19) = errcode
-    
-    gTraceArr(r, 20) = memAddr
-    gTraceArr(r, 21) = memBefore
-    gTraceArr(r, 22) = memAfter
-    gTraceArr(r, 23) = memNote
-End Sub
-
-Public Sub TraceFlush(Optional ByVal forceAll As Boolean = False)
-    If Not TraceEnabled() Then Exit Sub
-    If gTraceCount = 0 Then Exit Sub
-
-    TraceEnsureHeaders
-
-    Dim ws As Worksheet
-    Set ws = TraceGetSheet(True)
-
-    Dim startRow As Long, rowsToWrite As Long
-    If forceAll Then
-        gTraceWritten = 0
-    End If
-
-    rowsToWrite = gTraceCount - gTraceWritten
-    If rowsToWrite <= 0 Then Exit Sub
-
-    startRow = 2 + gTraceWritten
-
-    ws.Range("A" & startRow).Resize(rowsToWrite, TRACE_COLS).value = _
-        wsParentSlice(gTraceArr, gTraceWritten + 1, gTraceCount, TRACE_COLS)
-
-    gTraceWritten = gTraceCount
-End Sub
-
-' Helper: slice a 2D array [r1..r2, 1..cols] into a new 2D array
-Private Function wsParentSlice(ByRef src As Variant, ByVal r1 As Long, ByVal r2 As Long, ByVal cols As Long) As Variant
-    Dim out As Variant
-    Dim rr As Long, cc As Long, rOut As Long
-    ReDim out(1 To (r2 - r1 + 1), 1 To cols)
-    rOut = 0
-    For rr = r1 To r2
-        rOut = rOut + 1
-        For cc = 1 To cols
-            out(rOut, cc) = src(rr, cc)
-        Next cc
-    Next rr
-    wsParentSlice = out
-End Function
-
-' Convenience button macros
-Public Sub BTN_ClearTrace()
-    TraceClear
-End Sub
-
-Public Sub BTN_FlushTrace()
-    TraceFlush True
-End Sub
-
-
-''' Component: Sheet6
-''' [No code]
-
-''' Component: Sheet9
 ''' [No code]
