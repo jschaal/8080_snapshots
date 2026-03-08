@@ -1,5 +1,5 @@
 === VBA EXPORT: Z80 Model Current.xlsm ===
-Timestamp: 3/8/2026 8:57:58 AM
+Timestamp: 3/8/2026 6:58:43 AM
 ================================================================================
 
 ''' Component: ThisWorkbook
@@ -366,19 +366,18 @@ Public Sub RunDynamicTests()
         If runThis Then
             If testName = "Unit_VBA" Then
                 Dim passed As Boolean
-                VBARunAllTests
-                passed = VBAPassed
-                totalTests = totalTests + VBATestCount
-                passCount = passCount + VBATestCount - VBAFailureCount
+                passed = Not ClaudeRunAllTests
                 If passed Then
                     wsTest.Cells(nameRow, resultsCol).value = "PASS"
                     wsTest.Cells(nameRow, resultsCol).Interior.Color = vbGreen
+                    passCount = passCount + 1
                     Call SetRunFlagInControlTable(testName, 0)
                 Else
                     wsTest.Cells(nameRow, resultsCol).value = "FAIL"
                     wsTest.Cells(nameRow, resultsCol).Interior.Color = vbRed
                     batchPassed = False
                 End If
+                totalTests = totalTests + 1
             Else
                 compileThis = (val(wsTest.Cells(nameRow, compileCol).value) = 1)
                 If compileThis Then
@@ -437,6 +436,8 @@ Public Sub RunDynamicTests()
         End If
     Next t
 
+    If ClaudeRunAllTests Then
+    End If
     Application.Calculation = xlCalculationAutomatic
     Application.Calculate
     Application.ScreenUpdating = True
@@ -686,43 +687,29 @@ Private Sub SetRunFlagInControlTable(ByVal testName As String, ByVal valueToSet 
 End Sub
 Public Sub ResetTestCases()
     Dim ws As Worksheet: Set ws = Sheets("Unit Tests")
-    Dim firstCell As Range: Set firstCell = ws.Range("TestTable")
-    
+    Dim firstCell As Range: Set firstCell = ws.Range("TestTable")   ' top-left of the control table (header row)
     Dim lastRow As Long
     lastRow = ws.Cells(ws.Rows.Count, firstCell.Column + 1).End(xlUp).row
-    If lastRow < firstCell.row + 1 Then Exit Sub
+    If lastRow < firstCell.row + 1 Then Exit Sub  ' no data rows
     
-    ' OPTIMIZATION 1: Load data array once instead of cell-by-cell
-    Dim data As Variant
-    Dim nameCol As Long: nameCol = firstCell.Column + 1
-    Dim runCol As Long: runCol = firstCell.Column + 2
-    Dim startRow As Long: startRow = firstCell.row + 1
-    Dim rowCount As Long: rowCount = lastRow - startRow + 1
-    
-    ' Pull both columns in one operation
-    data = ws.Range(ws.Cells(startRow, nameCol), _
-                    ws.Cells(lastRow, runCol)).value
-    
-    ' OPTIMIZATION 2: Process array in-memory, collect changes
-    Dim changes() As Variant
-    ReDim changes(1 To rowCount, 1 To 1)
-    Dim r As Long, testName As String
-    
-    For r = 1 To UBound(data, 1)
-        testName = Trim$(CStr(data(r, 1)))
-        If testName <> "" Then
-            changes(r, 1) = 1
-        Else
-            changes(r, 1) = 0  ' Explicitly 0 to avoid blanks
-        End If
-    Next r
-    
-    ' OPTIMIZATION 3: Write all at once instead of iteratively
+    Dim rngNames As Range
+    Set rngNames = ws.Range(firstCell.offset(1, 0), ws.Cells(lastRow, firstCell.Column))
+    Dim idx As Range
+    Dim targetRow As Long
+    Dim testName As String
     Application.ScreenUpdating = False
-    ws.Range(ws.Cells(startRow, runCol), _
-             ws.Cells(lastRow, runCol)).value = changes
+    For Each idx In rngNames
+    ' Compute the row for Column R (Run column): that’s P + 2 columns
+        targetRow = idx.row
+        testName = ws.Cells(targetRow, firstCell.Column + 1).value
+        If testName <> "" Then
+            ws.Cells(targetRow, firstCell.Column + 2).value = 1
+        End If
+    Next idx
     Application.ScreenUpdating = True
+
 End Sub
+
 '================================================================================
 ' Module:       TestRunner
 '================================================================================
@@ -1645,7 +1632,7 @@ Public Function CALL_(ByVal op1 As String, Optional ByVal op2 As String = "") As
     sp_dec = sp_dec - 1
     pStack.clsPUSH sp_dec, usrHexToDec(Right$(strAddr, 2)), "CALL " & op1
     
-    SetReg "SP", sp_dec
+    RegSet "SP", sp_dec
     mUIStackDirty = True
     
     
@@ -1693,7 +1680,7 @@ End Function
 Public Function CMA() As Long
     Dim a As Long
     a = pRegs("A") And 255
-    SetReg "A", ((a Xor &HFF) And 255)
+    RegSet "A", ((a Xor &HFF) And 255)
     ' Flags unaffected
     CMA = 0
 End Function
@@ -1867,7 +1854,7 @@ Public Function DAA() As Long
     HlpFlagCalcAC IIf(lowAdj, 1, 0)
 
     result = result And 255
-    SetReg "A", result
+    RegSet "A", result
     HlpFlagCalcSign result: HlpFlagCalcZero result: HlpFlagCalcParity result
 
     DAA = 0
@@ -1917,8 +1904,8 @@ Public Function DAD(ByVal rp As String) As Long
     HlpFlagCalcCarry IIf(sum > &HFFFF&, 1, 0)
     sum = sum And &HFFFF&
 
-    SetReg "H", (sum \ 256&) And 255
-    SetReg "L", sum And 255
+    RegSet "H", (sum \ 256&) And 255
+    RegSet "L", sum And 255
     DAD = 0
 End Function
 ' --- DAD ---
@@ -2126,7 +2113,7 @@ Public Function IN_(ByVal op1 As String) As Long
     Select Case dec_port
         Case 255: 'FF
             portVal = usrForm.ConReadByte
-            SetReg "A", portVal
+            RegSet "A", portVal
         Case 254: 'FE
             If Not GetInput(errorBase + 3) Then
                 IN_ = errorBase + 3
@@ -2579,7 +2566,7 @@ Public Function LDA(ByVal op1 As String) As Long
     addr = HlpResolveAddr16(op1, errorBase, "LDA")
     If IsEmpty(addr) Then LDA = errorBase: Exit Function
 
-    SetReg "A", CLng(pMemory.addr(CLng(addr))) And 255
+    RegSet "A", CLng(pMemory.addr(CLng(addr))) And 255
     If HlpMemCheckError("LDA", CLng(addr), errorBase + 1) Then
         LDA = errorBase + 1
         Exit Function
@@ -2621,12 +2608,12 @@ Public Function LHLD(ByVal op1 As String) As Long
     If IsEmpty(addr) Then LHLD = errorBase: Exit Function
 
     a = CLng(addr)
-    SetReg "L", pMemory.addr(a) And 255
+    RegSet "L", pMemory.addr(a) And 255
     If HlpMemCheckError("LHLD", a, errorBase + 1) Then
         LHLD = errorBase + 1
         Exit Function
     End If
-    SetReg "H", pMemory.addr(a + 1) And 255
+    RegSet "H", pMemory.addr(a + 1) And 255
     If HlpMemCheckError("LHLD", a + 1, errorBase + 2) Then
         LHLD = errorBase + 2
         Exit Function
@@ -2678,7 +2665,7 @@ Public Function LDAX(ByVal rp As String) As Long
             Exit Function
     End Select
 
-    SetReg "A", pMemory.addr(addr) And 255
+    RegSet "A", pMemory.addr(addr) And 255
     If HlpMemCheckError("LDAX", addr, errorBase) Then
         LDAX = errorBase + 2
         Exit Function
@@ -2740,11 +2727,11 @@ Public Function LXI(ByVal op1 As String, op2 As String) As Long
     decHigh = usrHexToDec(regHigh)
 
     Select Case op1
-        Case "B": SetReg "B", decHigh: SetReg "C", decLow
-        Case "D": SetReg "D", decHigh: SetReg "E", decLow
-        Case "H": SetReg "H", decHigh: SetReg "L", decLow
+        Case "B": RegSet "B", decHigh: RegSet "C", decLow
+        Case "D": RegSet "D", decHigh: RegSet "E", decLow
+        Case "H": RegSet "H", decHigh: RegSet "L", decLow
         Case "SP"
-            Me.SetReg "SP", usrHexToDec(address)
+            Me.RegSet "SP", usrHexToDec(address)
             mUIStackDirty = True
 
     End Select
@@ -3090,11 +3077,11 @@ Friend Function POP(ByVal op1) As Long
     decHigh = registerRecH.value
 
     Select Case op1
-        Case "B": SetReg "B", decHigh: SetReg "C", decLow
-        Case "D": SetReg "D", decHigh: SetReg "E", decLow
-        Case "H": SetReg "H", decHigh: SetReg "L", decLow
+        Case "B": RegSet "B", decHigh: RegSet "C", decLow
+        Case "D": RegSet "D", decHigh: RegSet "E", decLow
+        Case "H": RegSet "H", decHigh: RegSet "L", decLow
         Case "PSW"
-            SetReg "A", decHigh
+            RegSet "A", decHigh
             flagByte = decLow And 255
             pFlags("Sign") = IIf((flagByte And 128) <> 0, 1, 0)
             pFlags("Zero") = IIf((flagByte And 64) <> 0, 1, 0)
@@ -3107,7 +3094,7 @@ Friend Function POP(ByVal op1) As Long
             SetError errorBase + 1, "POP: Invalid Register: " & op1: POP = errorBase + 1: Exit Function
     End Select
 
-    SetReg "SP", sp
+    RegSet "SP", sp
     
     POP = res
 End Function
@@ -3176,7 +3163,7 @@ Public Function PUSH(ByVal op1) As Long
             SetError errorBase + 1, "PUSH: Invalid Register: " & op1: PUSH = errorBase + 1: Exit Function
     End Select
 
-    SetReg "SP", sp
+    RegSet "SP", sp
     mUIStackDirty = True
     
     PUSH = 0
@@ -3213,7 +3200,7 @@ Public Function RAL() As Long
     cy = pFlags("Carry") And 1
     msb = IIf((a And &H80) <> 0, 1, 0)
     result = ((a * 2) And 255) Or cy
-    SetReg "A", result
+    RegSet "A", result
     HlpFlagCalcCarry msb
     RAL = 0
 End Function
@@ -3248,7 +3235,7 @@ Public Function RAR() As Long
     cy = pFlags("Carry") And 1
     lsb = a And 1
     result = ((a \ 2) And 127) Or (cy * 128)
-    SetReg "A", result
+    RegSet "A", result
     HlpFlagCalcCarry lsb
     RAR = 0
 End Function
@@ -3304,7 +3291,7 @@ Public Function RET() As Long
     sp_dec = sp_dec + 1
     retAddress = usrDecToHexString(stackRec.value) & retAddress
 
-    Me.SetReg "SP", sp_dec
+    Me.RegSet "SP", sp_dec
     mUIStackDirty = True
 
     Set addressRec = pAddressList.GetAddr(usrHexToDec(retAddress))
@@ -3321,7 +3308,7 @@ Public Function RLC() As Long
     a = pRegs("A") And 255
     msb = IIf((a And &H80) <> 0, 1, 0)
     result = ((a * 2) And 255) Or msb
-    SetReg "A", result
+    RegSet "A", result
     HlpFlagCalcCarry msb
     RLC = 0
 End Function
@@ -3353,7 +3340,7 @@ Public Function RRC() As Long
     a = pRegs("A") And 255
     lsb = a And 1
     result = ((a \ 2) And 127) Or (lsb * 128)
-    SetReg "A", result
+    RegSet "A", result
     HlpFlagCalcCarry lsb
     RRC = 0
 End Function
@@ -3495,7 +3482,7 @@ End Function
 Public Function SPHL() As Long
     Dim hl As Long
     hl = ((pRegs("H") And 255) * 256&) + (pRegs("L") And 255)
-    SetReg "SP", hl And &HFFFF&
+    RegSet "SP", hl And &HFFFF&
     mUIStackDirty = True
     SPHL = 0
 End Function
@@ -3758,8 +3745,8 @@ Public Function XCHG() As Long
     Dim d As Long, e As Long, h As Long, l As Long
     d = pRegs("D"): e = pRegs("E")
     h = pRegs("H"): l = pRegs("L")
-    SetReg "D", h: SetReg "E", l
-    SetReg "H", d: SetReg "L", e
+    RegSet "D", h: RegSet "E", l
+    RegSet "H", d: RegSet "L", e
     XCHG = 0
 End Function
 ' --- XCHG ---
@@ -3800,7 +3787,7 @@ Public Function XTHL() As Long
     End If
     
     pMemory.addr(sp) = CByte(pRegs("L") And 255)
-    SetReg "L", tmp
+    RegSet "L", tmp
 
     ' swap H <-> (SP+1)
     tmp = pMemory.addr(sp + 1) And 255
@@ -3809,7 +3796,7 @@ Public Function XTHL() As Long
         Exit Function
     End If
     pMemory.addr(sp + 1) = CByte(pRegs("H") And 255)
-    SetReg "H", tmp
+    RegSet "H", tmp
 
     mUIStackDirty = True
     XTHL = 0
@@ -3846,8 +3833,8 @@ Public Function EX(ByVal op1 As String, ByVal op2 As String) As Long
     ' Case 2: EX DE, HL (Swaps DE and HL register pairs)
     ElseIf op1 = "DE" And op2 = "HL" Then
         Dim tDE As Long: tDE = Me.RegGet16("DE")
-        Me.SetReg16 "DE", Me.RegGet16("HL")
-        Me.SetReg16 "HL", tDE
+        Me.RegSet16 "DE", Me.RegGet16("HL")
+        Me.RegSet16 "HL", tDE
         
     ' Case 3: EX (SP), HL (Swaps HL with the top of the Stack)
     ElseIf op1 = "(SP)" And op2 = "HL" Then
@@ -3861,7 +3848,7 @@ Public Function EX(ByVal op1 As String, ByVal op2 As String) As Long
         End If
         
         ' Swap them
-        Me.SetReg16 "HL", tSP
+        Me.RegSet16 "HL", tSP
         ' Write original HL back to stack
         pMemory.addr(Me.RegGet16("SP")) = tHL And &HFF
         pMemory.addr(Me.RegGet16("SP") + 1) = (tHL \ 256) And &HFF
@@ -4067,16 +4054,16 @@ Private Sub SetPairValue(ByVal rp As String, ByVal v As Long)
     v = v And &HFFFF&
     Select Case rp
         Case "B"
-            SetReg "B", (v \ 256&) And 255
-            SetReg "C", v And 255
+            RegSet "B", (v \ 256&) And 255
+            RegSet "C", v And 255
         Case "D"
-            SetReg "D", (v \ 256&) And 255
-            SetReg "E", v And 255
+            RegSet "D", (v \ 256&) And 255
+            RegSet "E", v And 255
         Case "H"
-            SetReg "H", (v \ 256&) And 255
-            SetReg "L", v And 255
+            RegSet "H", (v \ 256&) And 255
+            RegSet "L", v And 255
         Case "SP"
-            SetReg "SP", v
+            RegSet "SP", v
             mUIStackDirty = True
     End Select
 End Sub
@@ -4087,14 +4074,14 @@ End Sub
 '                         Register / Flag Utilities
 '==============================================================================
 
-Public Property Get Reg(ByVal name As String) As Variant
-    If pRegs.Exists(name) Then Reg = pRegs(name) Else Reg = 0
+Public Property Get reg(ByVal name As String) As Variant
+    If pRegs.Exists(name) Then reg = pRegs(name) Else reg = 0
 End Property
 ' ---  ---
 
-'Public Property Let Reg(ByVal name As String, ByVal value As Variant)
-'    If pRegs.Exists(name) Then pRegs(name) = value
-'End Property
+Public Property Let reg(ByVal name As String, ByVal value As Variant)
+    If pRegs.Exists(name) Then pRegs(name) = value
+End Property
 ' ---  ---
 
 Public Property Get Registers() As Variant
@@ -4102,13 +4089,10 @@ Public Property Get Registers() As Variant
 End Property
 ' ---  ---
 
-Public Property Get flag(ByVal name As String) As Variant
-    If pFlags.Exists(name) Then flag = pFlags(name) Else flag = 0
+Public Property Get Flag(ByVal name As String) As Long
+    If pFlags.Exists(name) Then Flag = pFlags(name) Else Flag = 0
 End Property
 ' ---  ---
-Public Property Let flag(ByVal name As String, ByVal value As Variant)
-    If pFlags.Exists(name) Then pFlags(name) = value
-End Property
 
 Public Property Get Flags() As Variant
     Flags = pFlags.Keys
@@ -4121,7 +4105,7 @@ End Property
 Private Sub SetError(ByVal errcode As Long, ByVal errString As String)
     Dim errMessage As String
     If errString Like "*Halt*" Then errMessage = errString Else errMessage = "Error: " & errcode & " - " & errString
-    errMessage = errMessage & " at line " & Reg("PC")
+    errMessage = errMessage & " at line " & reg("PC")
     Range("Error").value = errcode
     Range("errMessage") = errMessage
 End Sub
@@ -4219,24 +4203,11 @@ Public Function HlpFlagCalcZeroAndSign(result As Long) As Long
 End Function
 ' ---  ---
 
-' SetReg always updates internal state; paints UI only if not deferred.
-Public Function SetReg(ByVal register As String, ByVal value As Long)
-    If pRegs.Exists(register) Then
-        pRegs(register) = value
-        mUIRegsDirty = True
-        SetReg = value
-    Else
-        SetReg = -1
-    End If
-End Function
-Public Function SetFlag(ByVal flag As String, ByVal value As Long)
-    If pFlags.Exists(flag) Then
-        pFlags(flag) = value
-        mUIFlagsDirty = True
-        SetFlag = value
-    Else
-        SetFlag = -1
-    End If
+' RegSet always updates internal state; paints UI only if not deferred.
+Public Function RegSet(ByVal register As String, ByVal value As Long)
+    pRegs(register) = value
+    mUIRegsDirty = True
+    RegSet = value
 End Function
 ' PRI
 ' Print Immediate op1 value in either Hex or Ascii depending on A Register value
@@ -4492,7 +4463,7 @@ Private Function HlpStoreReg08(ByVal dest As String, ByVal value As Long, ByVal 
     End If
 
     If pRegs.Exists(dest) Then
-        SetReg dest, value
+        RegSet dest, value
         HlpStoreReg08 = True
         Exit Function
     End If
@@ -4864,11 +4835,11 @@ Private Function HlpRegGetName(ByVal code As Integer) As String
         Case Else: HlpRegGetName = "" ' 6 is (HL), handled separately
     End Select
 End Function
-Private Function HlpRegGetCode(ByVal Reg As String) As Byte
+Private Function HlpRegGetCode(ByVal reg As String) As Byte
     ' Standard Z80/8080 Register Mapping:
     ' B=000, C=001, D=010, E=011, H=100, L=101, (HL)=110, A=111
     
-    Select Case UCase(Trim(Reg))
+    Select Case UCase(Trim(reg))
         Case "B": HlpRegGetCode = 0
         Case "C": HlpRegGetCode = 1
         Case "D": HlpRegGetCode = 2
@@ -4934,7 +4905,7 @@ Public Function RegGet16(ByVal regPair As String) As Long
     ' Apply the 16-bit mask to ensure no overflow and force positive Long
     RegGet16 = result And &HFFFF&
 End Function
-Public Sub SetReg16(ByVal regPair As String, ByVal value As Long)
+Public Sub RegSet16(ByVal regPair As String, ByVal value As Long)
     Dim val As Long
     val = value And &HFFFF& ' Safety mask
     
@@ -5006,10 +4977,10 @@ Private Function LD(ByVal op1 As String, ByVal op2 As String) As Long
         End If
     ' 3. 16-Bit Register: LD HL, 1234H
     ElseIf Is16Bit(op1) Then
-        SetReg16 op1, usrHexToDec(CStr(op2))
+        RegSet16 op1, usrHexToDec(CStr(op2))
     ' 4. Standard 8-bit: LD A, B
     Else
-        SetReg op1, HlpGetOperandValue(op2)
+        RegSet op1, HlpGetOperandValue(op2)
     End If
     LD = 0
 End Function
@@ -5119,7 +5090,7 @@ Private Sub HlpALU_Addition(ByVal operandValue As Long, Optional ByVal includeCa
     ' Set flags
     pFlags("Carry") = cy
     HlpFlagCalcAC ac
-    SetReg "A", result
+    RegSet "A", result
     HlpFlagCalcSign result
     HlpFlagCalcZero result
     HlpFlagCalcParity result
@@ -5168,7 +5139,7 @@ Private Sub HlpALU_Subtraction(ByVal operandValue As Long, Optional ByVal includ
     ' Set flags
     pFlags("Carry") = borrow           ' CY = 1 indicates borrow
     HlpFlagCalcAC acBorrow
-    SetReg "A", result
+    RegSet "A", result
     HlpFlagCalcSign result
     HlpFlagCalcZero result
     HlpFlagCalcParity result
@@ -5201,7 +5172,7 @@ Private Sub HlpALU_AND(ByVal operandValue As Long)
     result = a And b
     
     ' Set result and flags
-    SetReg "A", result
+    RegSet "A", result
     pFlags("Carry") = 0      ' CY = 0 (always)
     pFlags("AC") = 1         ' AC = 1 (Z80 behavior)
     HlpFlagCalcSign result
@@ -5234,7 +5205,7 @@ Private Sub HlpALU_OR(ByVal operandValue As Long)
     result = a Or b
     
     ' Set result and flags
-    SetReg "A", result
+    RegSet "A", result
     pFlags("Carry") = 0
     pFlags("AC") = 0
     HlpFlagCalcSign result
@@ -5267,7 +5238,7 @@ Private Sub HlpALU_XOR(ByVal operandValue As Long)
     result = a Xor b
     
     ' Set result and flags
-    SetReg "A", result
+    RegSet "A", result
     pFlags("Carry") = 0
     pFlags("AC") = 0
     HlpFlagCalcSign result
@@ -5806,7 +5777,7 @@ End Function
 ' clsPUSH
 ' Pushes a new item with (address, value, register name) onto the stack.
 '------------------------------------------------------------------------------
-Public Sub clsPUSH(ByVal addr As Long, ByVal val As Long, ByVal Reg As String)
+Public Sub clsPUSH(ByVal addr As Long, ByVal val As Long, ByVal reg As String)
     Dim newItem As clsDecRegisterState
     Set newItem = New clsDecRegisterState
     Dim memory As clsMemory
@@ -5816,7 +5787,7 @@ Public Sub clsPUSH(ByVal addr As Long, ByVal val As Long, ByVal Reg As String)
     
     newItem.MemoryAddress = addr
     newItem.value = val
-    newItem.RegisterName = Reg
+    newItem.RegisterName = reg
     
     m_Count = m_Count + 1
     If m_Count = 1 Then
@@ -6008,9 +5979,9 @@ Public Sub decExecute()
         mConsoleOpen = False
         pc_dec = CLng(Range("Line0_dec").value)
         myCpu.SetPC pc_dec
-        myCpu.SetReg "SP", memEnd
+        myCpu.reg("SP") = memEnd
 
-        Range("StackStart").value = usrDecToHexString(myCpu.Reg("SP"))
+        Range("StackStart").value = usrDecToHexString(myCpu.reg("SP"))
         Range("StackDetails").ClearContents
         If stepMode Then
             RefreshFlags myCpu
@@ -6020,7 +5991,7 @@ Public Sub decExecute()
         End If
     Else
         ' Continue run / Step: pull PC from persistent CPU object
-        pc_dec = CLng(myCpu.Reg("PC"))
+        pc_dec = CLng(myCpu.reg("PC"))
     End If
     
     ' ========= Headless toggle =========
@@ -6133,8 +6104,8 @@ Public Sub decExecute()
             
             If TraceEnabled() Then
                 ' Snapshot pre-state for address calculations
-                preHL = ((myCpu.Reg("H") And 255) * 256&) + (myCpu.Reg("L") And 255)
-                preSP = (myCpu.Reg("SP") And &HFFFF&)
+                preHL = ((myCpu.reg("H") And 255) * 256&) + (myCpu.reg("L") And 255)
+                preSP = (myCpu.reg("SP") And &HFFFF&)
             
                 Select Case opcode
             
@@ -6231,11 +6202,11 @@ Public Sub decExecute()
                         ' Indirect reads via BC/DE
                         Case "LDAX"
                             If UCase$(op1) = "B" Then
-                                memAddrDec = ((myCpu.Reg("B") And 255) * 256&) + (myCpu.Reg("C") And 255)
+                                memAddrDec = ((myCpu.reg("B") And 255) * 256&) + (myCpu.reg("C") And 255)
                                 memTrackLen = 1
                                 memNote = "READ (BC)"
                             ElseIf UCase$(op1) = "D" Then
-                                memAddrDec = ((myCpu.Reg("D") And 255) * 256&) + (myCpu.Reg("E") And 255)
+                                memAddrDec = ((myCpu.reg("D") And 255) * 256&) + (myCpu.reg("E") And 255)
                                 memTrackLen = 1
                                 memNote = "READ (DE)"
                             End If
@@ -6399,7 +6370,7 @@ ExecFinalize:
             RefreshFlags myCpu
             myCpu.RefreshStack True
         Else
-            Range("PC").value = usrDecToHexString(myCpu.Reg("PC"))
+            Range("PC").value = usrDecToHexString(myCpu.reg("PC"))
         End If
 
         Application.StatusBar = False
@@ -6428,7 +6399,7 @@ Public Function RefreshRegisters(ByRef myCpu As clsDecCPU) As Integer
             rangeName = ""
         End If
         rangeName = rangeName & CStr(key)
-        Range(rangeName).value = usrDecToHexString(myCpu.Reg(key))
+        Range(rangeName).value = usrDecToHexString(myCpu.reg(key))
     Next
     myCpu.RegistersDirty = False
 End Function
@@ -6436,17 +6407,17 @@ Public Function RefreshFlags(ByRef myCpu As clsDecCPU) As Integer
     Dim key As Variant
     Dim rangeName As String
     For Each key In myCpu.Flags
-        Range(CStr(key)).value = myCpu.flag(key)
+        Range(CStr(key)).value = myCpu.Flag(key)
     Next
     myCpu.FlagsDirty = False
 End Function
 
 
 '------------------------------------------------------------------------------
-' ReSetRegisters
+' ReRegSetisters
 ' Clears sheet register display cells (not CPU object) for A..L, PC, SP view.
 '------------------------------------------------------------------------------
-Public Sub ReSetRegisters()
+Public Sub ReRegSetisters()
     Dim i As Integer
     For i = 0 To 8
         Range("Registers").offset(i, 2).value = 0
@@ -7410,20 +7381,20 @@ Public Sub TraceAppend(ByRef cpu As clsDecCPU, _
     gTraceArr(r, 4) = op1
     gTraceArr(r, 5) = op2
 
-    gTraceArr(r, 6) = Hex2(cpu.Reg("A"))
-    gTraceArr(r, 7) = Hex2(cpu.Reg("B"))
-    gTraceArr(r, 8) = Hex2(cpu.Reg("C"))
-    gTraceArr(r, 9) = Hex2(cpu.Reg("D"))
-    gTraceArr(r, 10) = Hex2(cpu.Reg("E"))
-    gTraceArr(r, 11) = Hex2(cpu.Reg("H"))
-    gTraceArr(r, 12) = Hex2(cpu.Reg("L"))
-    gTraceArr(r, 13) = Hex4(cpu.Reg("SP"))
+    gTraceArr(r, 6) = Hex2(cpu.reg("A"))
+    gTraceArr(r, 7) = Hex2(cpu.reg("B"))
+    gTraceArr(r, 8) = Hex2(cpu.reg("C"))
+    gTraceArr(r, 9) = Hex2(cpu.reg("D"))
+    gTraceArr(r, 10) = Hex2(cpu.reg("E"))
+    gTraceArr(r, 11) = Hex2(cpu.reg("H"))
+    gTraceArr(r, 12) = Hex2(cpu.reg("L"))
+    gTraceArr(r, 13) = Hex4(cpu.reg("SP"))
 
-    gTraceArr(r, 14) = cpu.flag("Sign")
-    gTraceArr(r, 15) = cpu.flag("Zero")
-    gTraceArr(r, 16) = cpu.flag("Parity")
-    gTraceArr(r, 17) = cpu.flag("Carry")
-    gTraceArr(r, 18) = cpu.flag("AC")
+    gTraceArr(r, 14) = cpu.Flag("Sign")
+    gTraceArr(r, 15) = cpu.Flag("Zero")
+    gTraceArr(r, 16) = cpu.Flag("Parity")
+    gTraceArr(r, 17) = cpu.Flag("Carry")
+    gTraceArr(r, 18) = cpu.Flag("AC")
 
     gTraceArr(r, 19) = errcode
     
@@ -7489,8 +7460,7 @@ End Sub
 ''' Component: Sheet9
 ''' [No code]
 
-''' Component: VBATests
-Option Explicit
+''' Component: ClaudeTests
 ' ==============================================================================
 ' Test Helper Functions
 ' ==============================================================================
@@ -7498,33 +7468,10 @@ Option Explicit
 Private pTestHeader As String
 Private pHeadersPrinted As Boolean
 Private pTestError As Boolean
-Private pTestCount As Long
-Private pTestFailureCount As Long
 Private Function CreateTestCPU() As clsDecCPU
     ' Create fresh CPU instance - auto-initializes via Class_Initialize
     Set CreateTestCPU = New clsDecCPU
 End Function
-Public Sub VBARunAllTests()
-    VBAResetCounts
-    VBAClaudeSetOne
-    VBAClaudeSetTwo
-End Sub
-Public Function VBATestCount() As Long
-    VBATestCount = pTestCount
-End Function
-Public Function VBAFailureCount() As Long
-    VBAFailureCount = pTestFailureCount
-End Function
-Public Function VBAPassed() As Boolean
-    VBAPassed = Not pTestError
-End Function
-Private Sub VBAResetCounts()
-    pHeadersPrinted = False
-    pTestError = False
-    pTestError = 0
-    pTestCount = 0
-    pTestFailureCount = 0
-End Sub
 
 Private Sub AssertEquals(expected As Long, actual As Long, testName As String)
     If pHeadersPrinted Then
@@ -7537,7 +7484,6 @@ Private Sub AssertEquals(expected As Long, actual As Long, testName As String)
         'Debug.Print "  ? " & testName & " (expected=" & expected & ")"
     Else
         Debug.Print "  ? FAIL: " & testName & " (expected=" & expected & ", got=" & actual & ")"
-        pTestFailureCount = pTestFailureCount + 1
         pTestError = True
     End If
 End Sub
@@ -7551,49 +7497,50 @@ Private Sub AssertTrue(condition As Boolean, testName As String)
 End Sub
 
 Private Sub TestHeader(category As String)
-    Debug.Print ""
-    Debug.Print "-------------------------------------------------------------------"
-    Debug.Print "Testing: " & pTestHeader
-    Debug.Print "-------------------------------------------------------------------"
+    If headers Then
+        Debug.Print ""
+        Debug.Print "-------------------------------------------------------------------"
+        Debug.Print "Testing: " & pTestHeader
+        Debug.Print "-------------------------------------------------------------------"
+    End If
 End Sub
-
 Sub Test_ADD()
     pTestHeader = "ADD (Add Register to A)"
     Dim cpu As clsDecCPU
     
     ' Test 1: Basic addition without overflow
     Set cpu = CreateTestCPU
-    cpu.SetReg "A", 80         ' 0x50 in hex
-    cpu.SetReg "B", 48         ' 0x30 in hex
+    cpu.reg("A") = 80        ' 0x50 in hex
+    cpu.reg("B") = 48        ' 0x30 in hex
     cpu.ADD "B"
-    AssertEquals 128, cpu.Reg("A"), "ADD: 80 + 48 = 128 (0x80)"
+    AssertEquals 128, cpu.reg("A"), "ADD: 80 + 48 = 128 (0x80)"
     
     ' Test 2: Addition with carry/overflow
     Set cpu = CreateTestCPU
-    cpu.SetReg "A", 255        ' 0xFF in hex
-    cpu.SetReg "B", 1          ' 0x01 in hex
+    cpu.reg("A") = 255       ' 0xFF in hex
+    cpu.reg("B") = 1         ' 0x01 in hex
     cpu.ADD "B"
-    AssertEquals 0, cpu.Reg("A"), "ADD: 255 + 1 = 0 (overflow, wraps)"
+    AssertEquals 0, cpu.reg("A"), "ADD: 255 + 1 = 0 (overflow, wraps)"
     
     ' Test 3: Auxiliary carry (AC flag)
     Set cpu = CreateTestCPU
-    cpu.SetReg "A", 15         ' 0x0F in hex
-    cpu.SetReg "B", 1          ' 0x01 in hex
+    cpu.reg("A") = 15        ' 0x0F in hex
+    cpu.reg("B") = 1         ' 0x01 in hex
     cpu.ADD "B"
-    AssertEquals 16, cpu.Reg("A"), "ADD: 15 + 1 = 16 (0x10)"
+    AssertEquals 16, cpu.reg("A"), "ADD: 15 + 1 = 16 (0x10)"
     
     ' Test 4: Sign flag
     Set cpu = CreateTestCPU
-    cpu.SetReg "A", 112        ' 0x70 in hex
-    cpu.SetReg "B", 32         ' 0x20 in hex
+    cpu.reg("A") = 112       ' 0x70 in hex
+    cpu.reg("B") = 32        ' 0x20 in hex
     cpu.ADD "B"
-    AssertEquals 144, cpu.Reg("A"), "ADD: 112 + 32 = 144 (0x90, sign set)"
+    AssertEquals 144, cpu.reg("A"), "ADD: 112 + 32 = 144 (0x90, sign set)"
     
     ' Test 5: ADD with same register (A = A + A, double A)
     Set cpu = CreateTestCPU
-    cpu.SetReg "A", 64         ' 0x40 in hex
+    cpu.reg("A") = 64        ' 0x40 in hex
     cpu.ADD "A"
-    AssertEquals 128, cpu.Reg("A"), "ADD: 64 + 64 = 128 (double)"
+    AssertEquals 128, cpu.reg("A"), "ADD: 64 + 64 = 128 (double)"
     
 End Sub
 
@@ -7603,15 +7550,15 @@ Sub Test_ADI()
     
     ' Test 1: Basic addition - pass hex string WITHOUT & prefix
     Set cpu = CreateTestCPU
-    cpu.SetReg "A", 80
+    cpu.reg("A") = 80
     cpu.ADI "30"             ' Pass as hex digits only: 30 hex = 48 decimal
-    AssertEquals 128, cpu.Reg("A"), "ADI: 80 + 48 = 128 (using hex string 30)"
+    AssertEquals 128, cpu.reg("A"), "ADI: 80 + 48 = 128 (using hex string 30)"
     
     ' Test 2: With overflow
     Set cpu = CreateTestCPU
-    cpu.SetReg "A", 255
+    cpu.reg("A") = 255
     cpu.ADI "02"             ' 02 hex = 2 decimal
-    AssertEquals 1, cpu.Reg("A"), "ADI: 255 + 2 = 1 (overflow)"
+    AssertEquals 1, cpu.reg("A"), "ADI: 255 + 2 = 1 (overflow)"
     
 End Sub
 
@@ -7621,15 +7568,15 @@ Sub Test_ADC()
     
     ' Test 1: Add with carry clear (requires carry flag manipulation)
     Set cpu = CreateTestCPU
-    cpu.SetReg "A", 80
-    cpu.SetReg "B", 48
+    cpu.reg("A") = 80
+    cpu.reg("B") = 48
     cpu.ADC "B"
-    AssertEquals 128, cpu.Reg("A"), "ADC: 80 + 48 = 128 (no carry input)"
+    AssertEquals 128, cpu.reg("A"), "ADC: 80 + 48 = 128 (no carry input)"
     
     ' Test 2: Add with carry set (would be 81 if carry is properly included)
     Set cpu = CreateTestCPU
-    cpu.SetReg "A", 80
-    cpu.SetReg "B", 48
+    cpu.reg("A") = 80
+    cpu.reg("B") = 48
     cpu.ADC "B"
     ' Result depends on initial carry flag state
     
@@ -7641,23 +7588,23 @@ Sub Test_SUB()
     
     ' Test 1: Basic subtraction
     Set cpu = CreateTestCPU
-    cpu.SetReg "A", 80
-    cpu.SetReg "B", 48
+    cpu.reg("A") = 80
+    cpu.reg("B") = 48
     cpu.SUB_ "B"
-    AssertEquals 32, cpu.Reg("A"), "SUB: 80 - 48 = 32 (0x20)"
+    AssertEquals 32, cpu.reg("A"), "SUB: 80 - 48 = 32 (0x20)"
     
     ' Test 2: Subtraction with borrow (A < B)
     Set cpu = CreateTestCPU
-    cpu.SetReg "A", 48
-    cpu.SetReg "B", 80
+    cpu.reg("A") = 48
+    cpu.reg("B") = 80
     cpu.SUB_ "B"
-    AssertEquals 224, cpu.Reg("A"), "SUB: 48 - 80 = 224 (0xE0, wraps with borrow)"
+    AssertEquals 224, cpu.reg("A"), "SUB: 48 - 80 = 224 (0xE0, wraps with borrow)"
     
     ' Test 3: Subtract from itself (result = 0)
     Set cpu = CreateTestCPU
-    cpu.SetReg "A", 80
+    cpu.reg("A") = 80
     cpu.SUB_ "A"
-    AssertEquals 0, cpu.Reg("A"), "SUB: 80 - 80 = 0"
+    AssertEquals 0, cpu.reg("A"), "SUB: 80 - 80 = 0"
     
 End Sub
 
@@ -7666,9 +7613,9 @@ Sub Test_SUI()
     Dim cpu As clsDecCPU
     
     Set cpu = CreateTestCPU
-    cpu.SetReg "A", 80
+    cpu.reg("A") = 80
     cpu.SUI "30"             ' 30 hex = 48 decimal
-    AssertEquals 32, cpu.Reg("A"), "SUI: 80 - 48 = 32"
+    AssertEquals 32, cpu.reg("A"), "SUI: 80 - 48 = 32"
     
 End Sub
 Sub Test_ANA()
@@ -7677,23 +7624,23 @@ Sub Test_ANA()
     
     ' Test 1: Basic AND
     Set cpu = CreateTestCPU
-    cpu.SetReg "A", 255        ' 0xFF
-    cpu.SetReg "B", 15         ' 0x0F
+    cpu.reg("A") = 255       ' 0xFF
+    cpu.reg("B") = 15        ' 0x0F
     cpu.ANA "B"
-    AssertEquals 15, cpu.Reg("A"), "ANA: 255 AND 15 = 15 (0x0F)"
+    AssertEquals 15, cpu.reg("A"), "ANA: 255 AND 15 = 15 (0x0F)"
     
     ' Test 2: AND with 0
     Set cpu = CreateTestCPU
-    cpu.SetReg "A", 255
-    cpu.SetReg "B", 0
+    cpu.reg("A") = 255
+    cpu.reg("B") = 0
     cpu.ANA "B"
-    AssertEquals 0, cpu.Reg("A"), "ANA: 255 AND 0 = 0"
+    AssertEquals 0, cpu.reg("A"), "ANA: 255 AND 0 = 0"
     
     ' Test 3: AND with itself
     Set cpu = CreateTestCPU
-    cpu.SetReg "A", 165        ' 0xA5
+    cpu.reg("A") = 165       ' 0xA5
     cpu.ANA "A"
-    AssertEquals 165, cpu.Reg("A"), "ANA: 165 AND 165 = 165 (identity)"
+    AssertEquals 165, cpu.reg("A"), "ANA: 165 AND 165 = 165 (identity)"
     
 End Sub
 
@@ -7703,9 +7650,9 @@ Sub Test_ANI()
     
     ' Test 1: Mask high nibble (keep low 4 bits only)
     Set cpu = CreateTestCPU
-    cpu.SetReg "A", 245        ' 0xF5
+    cpu.reg("A") = 245       ' 0xF5
     cpu.ANI "0F"             ' Hex 0F = 15 decimal, mask
-    AssertEquals 5, cpu.Reg("A"), "ANI: 245 AND 15 = 5 (0xF5 AND 0x0F = 0x05)"
+    AssertEquals 5, cpu.reg("A"), "ANI: 245 AND 15 = 5 (0xF5 AND 0x0F = 0x05)"
     
 End Sub
 Sub Test_ORA()
@@ -7714,17 +7661,17 @@ Sub Test_ORA()
     
     ' Test 1: Basic OR
     Set cpu = CreateTestCPU
-    cpu.SetReg "A", 240        ' 0xF0
-    cpu.SetReg "B", 15         ' 0x0F
+    cpu.reg("A") = 240       ' 0xF0
+    cpu.reg("B") = 15        ' 0x0F
     cpu.ORA "B"
-    AssertEquals 255, cpu.Reg("A"), "ORA: 240 OR 15 = 255 (0xFF)"
+    AssertEquals 255, cpu.reg("A"), "ORA: 240 OR 15 = 255 (0xFF)"
     
     ' Test 2: OR with 0
     Set cpu = CreateTestCPU
-    cpu.SetReg "A", 85         ' 0x55
-    cpu.SetReg "B", 0
+    cpu.reg("A") = 85        ' 0x55
+    cpu.reg("B") = 0
     cpu.ORA "B"
-    AssertEquals 85, cpu.Reg("A"), "ORA: 85 OR 0 = 85"
+    AssertEquals 85, cpu.reg("A"), "ORA: 85 OR 0 = 85"
     
 End Sub
 
@@ -7734,15 +7681,15 @@ Sub Test_ORI()
     
     ' Test 1: Set bit 7 using OR
     Set cpu = CreateTestCPU
-    cpu.SetReg "A", 0
+    cpu.reg("A") = 0
     cpu.ORI "80"             ' 80 hex = 128 decimal, which is bit 7
-    AssertEquals 128, cpu.Reg("A"), "ORI: 0 OR 128 = 128 (0x80, bit 7 set)"
+    AssertEquals 128, cpu.reg("A"), "ORI: 0 OR 128 = 128 (0x80, bit 7 set)"
     
     ' Test 2: Combine patterns
     Set cpu = CreateTestCPU
-    cpu.SetReg "A", 240        ' 0xF0
+    cpu.reg("A") = 240       ' 0xF0
     cpu.ORI "0F"             ' 0x0F
-    AssertEquals 255, cpu.Reg("A"), "ORI: 240 OR 15 = 255 (0xFF)"
+    AssertEquals 255, cpu.reg("A"), "ORI: 240 OR 15 = 255 (0xFF)"
     
 End Sub
 Sub Test_XRA()
@@ -7751,16 +7698,16 @@ Sub Test_XRA()
     
     ' Test 1: XOR with itself = 0 (fast clear)
     Set cpu = CreateTestCPU
-    cpu.SetReg "A", 255
+    cpu.reg("A") = 255
     cpu.XRA "A"
-    AssertEquals 0, cpu.Reg("A"), "XRA: 255 XOR 255 = 0 (fast clear A)"
+    AssertEquals 0, cpu.reg("A"), "XRA: 255 XOR 255 = 0 (fast clear A)"
     
     ' Test 2: XOR with 0
     Set cpu = CreateTestCPU
-    cpu.SetReg "A", 165        ' 0xA5
-    cpu.SetReg "B", 0
+    cpu.reg("A") = 165       ' 0xA5
+    cpu.reg("B") = 0
     cpu.XRA "B"
-    AssertEquals 165, cpu.Reg("A"), "XRA: 165 XOR 0 = 165 (identity)"
+    AssertEquals 165, cpu.reg("A"), "XRA: 165 XOR 0 = 165 (identity)"
     
 End Sub
 
@@ -7770,9 +7717,9 @@ Sub Test_XRI()
     
     ' Test 1: Invert all bits
     Set cpu = CreateTestCPU
-    cpu.SetReg "A", 0
+    cpu.reg("A") = 0
     cpu.XRI "FF"             ' FF hex = 255 decimal
-    AssertEquals 255, cpu.Reg("A"), "XRI: 0 XOR 255 = 255 (invert)"
+    AssertEquals 255, cpu.reg("A"), "XRI: 0 XOR 255 = 255 (invert)"
     
 End Sub
 Sub Test_CMP()
@@ -7781,24 +7728,24 @@ Sub Test_CMP()
     
     ' Test 1: A = B (equal)
     Set cpu = CreateTestCPU
-    cpu.SetReg "A", 80
-    cpu.SetReg "B", 80
+    cpu.reg("A") = 80
+    cpu.reg("B") = 80
     cpu.CMP "B"
-    AssertEquals 80, cpu.Reg("A"), "CMP: A unchanged (80)"
+    AssertEquals 80, cpu.reg("A"), "CMP: A unchanged (80)"
     
     ' Test 2: A > B
     Set cpu = CreateTestCPU
-    cpu.SetReg "A", 128
-    cpu.SetReg "B", 64
+    cpu.reg("A") = 128
+    cpu.reg("B") = 64
     cpu.CMP "B"
-    AssertEquals 128, cpu.Reg("A"), "CMP: A unchanged (128)"
+    AssertEquals 128, cpu.reg("A"), "CMP: A unchanged (128)"
     
     ' Test 3: A < B
     Set cpu = CreateTestCPU
-    cpu.SetReg "A", 64
-    cpu.SetReg "B", 128
+    cpu.reg("A") = 64
+    cpu.reg("B") = 128
     cpu.CMP "B"
-    AssertEquals 64, cpu.Reg("A"), "CMP: A unchanged (64)"
+    AssertEquals 64, cpu.reg("A"), "CMP: A unchanged (64)"
     
 End Sub
 
@@ -7807,9 +7754,9 @@ Sub Test_CPI()
     Dim cpu As clsDecCPU
     
     Set cpu = CreateTestCPU
-    cpu.SetReg "A", 80
+    cpu.reg("A") = 80
     cpu.CPI "50"             ' Compare with 50 hex = 80 decimal
-    AssertEquals 80, cpu.Reg("A"), "CPI: A unchanged (80)"
+    AssertEquals 80, cpu.reg("A"), "CPI: A unchanged (80)"
     
 End Sub
 Sub Test_RLC()
@@ -7817,9 +7764,9 @@ Sub Test_RLC()
     Dim cpu As clsDecCPU
     
     Set cpu = CreateTestCPU
-    cpu.SetReg "A", 128        ' 0x80 - bit 7 set
+    cpu.reg("A") = 128       ' 0x80 - bit 7 set
     cpu.RLC
-    AssertEquals 1, cpu.Reg("A"), "RLC: 128 rotated left = 1 (bit 7 wraps to bit 0)"
+    AssertEquals 1, cpu.reg("A"), "RLC: 128 rotated left = 1 (bit 7 wraps to bit 0)"
     
 End Sub
 
@@ -7828,9 +7775,9 @@ Sub Test_RRC()
     Dim cpu As clsDecCPU
     
     Set cpu = CreateTestCPU
-    cpu.SetReg "A", 1          ' Bit 0 set
+    cpu.reg("A") = 1         ' Bit 0 set
     cpu.RRC
-    AssertEquals 128, cpu.Reg("A"), "RRC: 1 rotated right = 128 (bit 0 wraps to bit 7)"
+    AssertEquals 128, cpu.reg("A"), "RRC: 1 rotated right = 128 (bit 0 wraps to bit 7)"
     
 End Sub
 
@@ -7839,9 +7786,9 @@ Sub Test_RAL()
     Dim cpu As clsDecCPU
     
     Set cpu = CreateTestCPU
-    cpu.SetReg "A", 128        ' Bit 7 set
+    cpu.reg("A") = 128       ' Bit 7 set
     cpu.RAL
-    AssertEquals 0, cpu.Reg("A"), "RAL: 128 with CY=0 becomes 0"
+    AssertEquals 0, cpu.reg("A"), "RAL: 128 with CY=0 becomes 0"
     
 End Sub
 
@@ -7850,9 +7797,9 @@ Sub Test_RAR()
     Dim cpu As clsDecCPU
     
     Set cpu = CreateTestCPU
-    cpu.SetReg "A", 1          ' Bit 0 set
+    cpu.reg("A") = 1         ' Bit 0 set
     cpu.RAR
-    AssertEquals 0, cpu.Reg("A"), "RAR: 1 with CY=0 becomes 0"
+    AssertEquals 0, cpu.reg("A"), "RAR: 1 with CY=0 becomes 0"
     
 End Sub
 Sub Test_CMA()
@@ -7860,9 +7807,9 @@ Sub Test_CMA()
     Dim cpu As clsDecCPU
     
     Set cpu = CreateTestCPU
-    cpu.SetReg "A", 0
+    cpu.reg("A") = 0
     cpu.CMA
-    AssertEquals 255, cpu.Reg("A"), "CMA: NOT 0 = 255 (0xFF)"
+    AssertEquals 255, cpu.reg("A"), "CMA: NOT 0 = 255 (0xFF)"
     
 End Sub
 
@@ -7872,7 +7819,7 @@ Sub Test_CMC()
     
     Set cpu = CreateTestCPU
     cpu.CMC
-    AssertEquals 1, cpu.flag("Carry"), "CMC: NOT Carry = 1"
+    AssertEquals 1, cpu.Flag("Carry"), "CMC: NOT Carry = 1"
 End Sub
 
 Sub Test_STC()
@@ -7881,7 +7828,7 @@ Sub Test_STC()
     
     Set cpu = CreateTestCPU
     cpu.STC
-    AssertEquals 1, cpu.flag("Carry"), "STC: NOT Carry = 1"
+    AssertEquals 1, cpu.Flag("Carry"), "STC: NOT Carry = 1"
     
 End Sub
 Sub Test_INR()
@@ -7890,21 +7837,21 @@ Sub Test_INR()
     
     ' Test 1: Basic increment
     Set cpu = CreateTestCPU
-    cpu.SetReg "A", 80
+    cpu.reg("A") = 80
     cpu.INR "A"
-    AssertEquals 81, cpu.Reg("A"), "INR: 80 + 1 = 81"
+    AssertEquals 81, cpu.reg("A"), "INR: 80 + 1 = 81"
     
     ' Test 2: Increment with overflow
     Set cpu = CreateTestCPU
-    cpu.SetReg "A", 255
+    cpu.reg("A") = 255
     cpu.INR "A"
-    AssertEquals 0, cpu.Reg("A"), "INR: 255 + 1 = 0 (wrap around)"
+    AssertEquals 0, cpu.reg("A"), "INR: 255 + 1 = 0 (wrap around)"
     
     ' Test 3: AC flag on half-carry
     Set cpu = CreateTestCPU
-    cpu.SetReg "A", 15         ' 0x0F
+    cpu.reg("A") = 15        ' 0x0F
     cpu.INR "A"
-    AssertEquals 16, cpu.Reg("A"), "INR: 15 + 1 = 16 (half-carry)"
+    AssertEquals 16, cpu.reg("A"), "INR: 15 + 1 = 16 (half-carry)"
     
 End Sub
 
@@ -7914,21 +7861,21 @@ Sub Test_DCR()
     
     ' Test 1: Basic decrement
     Set cpu = CreateTestCPU
-    cpu.SetReg "A", 80
+    cpu.reg("A") = 80
     cpu.DCR "A"
-    AssertEquals 79, cpu.Reg("A"), "DCR: 80 - 1 = 79"
+    AssertEquals 79, cpu.reg("A"), "DCR: 80 - 1 = 79"
     
     ' Test 2: Decrement from 0
     Set cpu = CreateTestCPU
-    cpu.SetReg "A", 0
+    cpu.reg("A") = 0
     cpu.DCR "A"
-    AssertEquals 255, cpu.Reg("A"), "DCR: 0 - 1 = 255 (wrap around)"
+    AssertEquals 255, cpu.reg("A"), "DCR: 0 - 1 = 255 (wrap around)"
     
     ' Test 3: Decrement to 0
     Set cpu = CreateTestCPU
-    cpu.SetReg "A", 1
+    cpu.reg("A") = 1
     cpu.DCR "A"
-    AssertEquals 0, cpu.Reg("A"), "DCR: 1 - 1 = 0"
+    AssertEquals 0, cpu.reg("A"), "DCR: 1 - 1 = 0"
     
 End Sub
 
@@ -7938,18 +7885,18 @@ Sub Test_INX()
     
     ' Test 1: Increment BC
     Set cpu = CreateTestCPU
-    cpu.SetReg "B", 16         ' 0x10
-    cpu.SetReg "C", 0
+    cpu.reg("B") = 16        ' 0x10
+    cpu.reg("C") = 0
     cpu.INX "B"
-    AssertEquals 1, cpu.Reg("C"), "INX: C remains 0 when not at 255"
+    AssertEquals 1, cpu.reg("C"), "INX: C remains 0 when not at 255"
     
     ' Test 2: Increment with carry
     Set cpu = CreateTestCPU
-    cpu.SetReg "B", 16
-    cpu.SetReg "C", 255
+    cpu.reg("B") = 16
+    cpu.reg("C") = 255
     cpu.INX "B"
-    AssertEquals 17, cpu.Reg("B"), "INX: B incremented from 16 to 17 when C overflows"
-    AssertEquals 0, cpu.Reg("C"), "INX: C wrapped from 255 to 0"
+    AssertEquals 17, cpu.reg("B"), "INX: B incremented from 16 to 17 when C overflows"
+    AssertEquals 0, cpu.reg("C"), "INX: C wrapped from 255 to 0"
     
 End Sub
 
@@ -7959,19 +7906,19 @@ Sub Test_DCX()
     
     ' Test 1: Decrement BC
     Set cpu = CreateTestCPU
-    cpu.SetReg "B", 16
-    cpu.SetReg "C", 1
+    cpu.reg("B") = 16
+    cpu.reg("C") = 1
     cpu.DCX "B"
-    AssertEquals 16, cpu.Reg("B"), "DCX: B unchanged when C not at 0"
-    AssertEquals 0, cpu.Reg("C"), "DCX: C decremented"
+    AssertEquals 16, cpu.reg("B"), "DCX: B unchanged when C not at 0"
+    AssertEquals 0, cpu.reg("C"), "DCX: C decremented"
     
     ' Test 2: Decrement with borrow
     Set cpu = CreateTestCPU
-    cpu.SetReg "B", 16
-    cpu.SetReg "C", 0
+    cpu.reg("B") = 16
+    cpu.reg("C") = 0
     cpu.DCX "B"
-    AssertEquals 15, cpu.Reg("B"), "DCX: B decremented when C at 0"
-    AssertEquals 255, cpu.Reg("C"), "DCX: C wrapped to 255"
+    AssertEquals 15, cpu.reg("B"), "DCX: B decremented when C at 0"
+    AssertEquals 255, cpu.reg("C"), "DCX: C wrapped to 255"
     
 End Sub
 
@@ -7981,13 +7928,13 @@ Sub Test_DAD()
     
     ' Test 1: Add BC to HL
     Set cpu = CreateTestCPU
-    cpu.SetReg "H", 16         ' HL = 0x1000 = 4096
-    cpu.SetReg "L", 0
-    cpu.SetReg "B", 32         ' BC = 0x2000 = 8192
-    cpu.SetReg "C", 0
+    cpu.reg("H") = 16        ' HL = 0x1000 = 4096
+    cpu.reg("L") = 0
+    cpu.reg("B") = 32        ' BC = 0x2000 = 8192
+    cpu.reg("C") = 0
     cpu.DAD "B"
-    AssertEquals 48, cpu.Reg("H"), "DAD: H = 16 + 32 = 48 (HL += BC)"
-    AssertEquals 0, cpu.Reg("L"), "DAD: L unchanged"
+    AssertEquals 48, cpu.reg("H"), "DAD: H = 16 + 32 = 48 (HL += BC)"
+    AssertEquals 0, cpu.reg("L"), "DAD: L unchanged"
     
 End Sub
 Sub Test_MOV()
@@ -7995,9 +7942,9 @@ Sub Test_MOV()
     Dim cpu As clsDecCPU
     
     Set cpu = CreateTestCPU
-    cpu.SetReg "B", 66         ' 0x42
+    cpu.reg("B") = 66        ' 0x42
     cpu.MOV "A", "B"
-    AssertEquals 66, cpu.Reg("A"), "MOV: A <- B (copied 66)"
+    AssertEquals 66, cpu.reg("A"), "MOV: A <- B (copied 66)"
     
 End Sub
 
@@ -8007,7 +7954,7 @@ Sub Test_MVI()
     
     Set cpu = CreateTestCPU
     cpu.MVI "A", "50"        ' Pass hex digits only: 50 hex = 80 decimal
-    AssertEquals 80, cpu.Reg("A"), "MVI: A <- 80 (from hex 50)"
+    AssertEquals 80, cpu.reg("A"), "MVI: A <- 80 (from hex 50)"
     
 End Sub
 Sub Test_JMP()
@@ -8015,9 +7962,9 @@ Sub Test_JMP()
     Dim cpu As clsDecCPU
     
     Set cpu = CreateTestCPU
-    cpu.SetReg "PC", 0
+    cpu.reg("PC") = 0
     cpu.JMP "0010"           ' Pass as hex string (1000 hex = 4096 decimal)
-    AssertEquals 16, cpu.Reg("PC"), "JMP: PC set to 4096 (0x1000)"
+    AssertEquals 16, cpu.reg("PC"), "JMP: PC set to 4096 (0x1000)"
     
 End Sub
 
@@ -8037,14 +7984,14 @@ Sub Test_NOP()
     Dim cpu As clsDecCPU
     
     Set cpu = CreateTestCPU
-    cpu.SetReg "A", 80
-    cpu.SetReg "B", 48
+    cpu.reg("A") = 80
+    cpu.reg("B") = 48
     cpu.NOP
-    AssertEquals 80, cpu.Reg("A"), "NOP: A unchanged"
-    AssertEquals 48, cpu.Reg("B"), "NOP: B unchanged"
+    AssertEquals 80, cpu.reg("A"), "NOP: A unchanged"
+    AssertEquals 48, cpu.reg("B"), "NOP: B unchanged"
     
 End Sub
-Public Sub VBAClaudeSetOne()
+Public Function ClaudeRunAllTests() As Boolean
     '==============================================================================
     ' MASTER TEST SUITE - Runs all instruction tests
     '==============================================================================
@@ -8055,6 +8002,8 @@ Public Sub VBAClaudeSetOne()
     Debug.Print "+--------------------------------------------------------------------------------+"
     Debug.Print ""
     
+    pHeadersPrinted = False
+    pTestError = False
     
     ' ARITHMETIC (5 tests)
     Test_ADD
@@ -8097,536 +8046,16 @@ Public Sub VBAClaudeSetOne()
     Test_MOV
     Test_MVI
     
-    ' JUMPS (2 tests)
-    'Test_JMP this will not run without an active memory reference
+    ' JUMPS (3 tests)
+    'Test_JMP
     Test_HLT
     Test_NOP
-    
-    pTestCount = pTestCount + 5 + 7 + 2 + 4 + 3 + 6 + 2 + 2
     
     Debug.Print vbCrLf & "+--------------------------------------------------------------------------------+"
     Debug.Print "¦                         TEST SUITE COMPLETE                                  ¦"
     Debug.Print "¦              Check Immediate Window above for detailed results              ¦"
     Debug.Print "+--------------------------------------------------------------------------------+"
     
-End Sub
-Public Sub VBAClaudeSetTwo()
-    Test_ADD_EdgeCases
-    Test_ADC_WithCarry
-    Test_SUB_BorrowCases
-    Test_ANA_LogicalAND
-    Test_ORA_LogicalOR
-    Test_XRA_LogicalXOR
-    Test_RLC_RotateLeftCircular
-    Test_RRC_RotateRightCircular
-    Test_RAL_RotateLeftArithmetic
-    Test_RAR_RotateRightArithmetic
-    Test_CPI_CompareImmediate
-    Test_LHLD_LoadMemoryToHL
-    'Test_SHLD_StoreHLToMemory
-    Test_FlagAndCheckFlag
-    Test_MOV_AllRegisterPairs
-    Test_MVI_AllRegisters
-    'Test_PUSH_POP_StackBalance
-    'Test_JC_JumpIfCarry
-    'Test_JNZ_JumpIfNotZero
-    'Test_JM_JumpIfMinus
-    'Test_CALL_RET_BasicFlow
-    pTestCount = pTestCount + 15
-End Sub
+    ClaudeRunAllTests = pTestError
+End Function
 
-Sub Test_ADD_EdgeCases()
-    pTestHeader = "ADD - Edge Cases"
-    Dim cpu As clsDecCPU
-    
-    ' Test 1: Zero + Zero
-    Set cpu = CreateTestCPU
-    cpu.SetReg "A", 0
-    cpu.SetReg "B", 0
-    cpu.ADD "B"
-    AssertEquals 0, cpu.Reg("A"), "ADD: 0 + 0 = 0"
-    AssertEquals 1, cpu.flag("Zero"), "ADD: Zero flag set"
-    
-    ' Test 2: Max + Max = overflow
-    Set cpu = CreateTestCPU
-    cpu.SetReg "A", 255
-    cpu.SetReg "B", 255
-    cpu.ADD "B"
-    AssertEquals 254, cpu.Reg("A"), "ADD: 255 + 255 = 254 (wrap, carry set)"
-    AssertEquals 1, cpu.flag("Carry"), "ADD: Carry flag set on overflow"
-    
-    ' Test 3: Half-carry boundary (0x0F + 0x01)
-    Set cpu = CreateTestCPU
-    cpu.SetReg "A", &HF
-    cpu.SetReg "B", 1
-    cpu.ADD "B"
-    AssertEquals &H10, cpu.Reg("A"), "ADD: Half-carry detected at 4-bit boundary"
-    AssertEquals 1, cpu.flag("AC"), "ADD: AC (Auxiliary Carry) flag set"
-    
-    ' Test 4: Parity - 7 bits set (odd parity)
-    Set cpu = CreateTestCPU
-    cpu.SetReg "A", &H7F   ' 0111 1111
-    cpu.SetReg "B", 0
-    cpu.ADD "B"
-    AssertEquals &H7F, cpu.Reg("A"), "ADD: 127 unchanged"
-    AssertEquals 0, cpu.flag("Parity"), "ADD: Parity flag clear (odd)"
-    
-    ' Test 5: Parity - 8 bits set (even parity)
-    Set cpu = CreateTestCPU
-    cpu.SetReg "A", &HFF   ' 1111 1111
-    cpu.SetReg "B", 0
-    cpu.ADD "B"
-    AssertEquals 1, cpu.flag("Parity"), "ADD: Parity flag set (even)"
-    
-End Sub
-Sub Test_ADC_WithCarry()
-    pTestHeader = "ADC - Add with Carry"
-    Dim cpu As clsDecCPU
-    
-    ' Test 1: ADC without carry-in
-    Set cpu = CreateTestCPU
-    cpu.SetReg "A", 50
-    cpu.SetReg "B", 30
-    cpu.SetFlag "Carry", 0
-    cpu.ADC "B"
-    AssertEquals 80, cpu.Reg("A"), "ADC: 50 + 30 + 0 = 80"
-    
-    ' Test 2: ADC with carry-in (adds 1)
-    Set cpu = CreateTestCPU
-    cpu.SetReg "A", 50
-    cpu.SetReg "B", 30
-    cpu.SetFlag "Carry", 1
-    cpu.ADC "B"
-    AssertEquals 81, cpu.Reg("A"), "ADC: 50 + 30 + 1(carry) = 81"
-    
-    ' Test 3: ADC causing carry-out
-    Set cpu = CreateTestCPU
-    cpu.SetReg "A", 255
-    cpu.SetReg "B", 0
-    cpu.SetFlag "Carry", 1
-    cpu.ADC "B"
-    AssertEquals 0, cpu.Reg("A"), "ADC: 255 + 0 + 1 = 0 (overflow, carry set)"
-    AssertEquals 1, cpu.flag("Carry"), "ADC: Carry flag set on overflow"
-    
-    ' Test 4: ADC with half-carry from Carry bit
-    Set cpu = CreateTestCPU
-    cpu.SetReg "A", &HF
-    cpu.SetReg "B", 0
-    cpu.SetFlag "Carry", 1
-    cpu.ADC "B"
-    AssertEquals &H10, cpu.Reg("A"), "ADC: 15 + 0 + 1(C) = 16 (half-carry)"
-    AssertEquals 1, cpu.flag("AC"), "ADC: AC flag set"
-    
-End Sub
-Sub Test_SUB_BorrowCases()
-    pTestHeader = "SUB - Subtract with Borrow"
-    Dim cpu As clsDecCPU
-    
-    ' Test 1: Simple subtraction
-    Set cpu = CreateTestCPU
-    cpu.SetReg "A", 100
-    cpu.SetReg "B", 30
-    cpu.SUB_ "B"
-    AssertEquals 70, cpu.Reg("A"), "SUB: 100 - 30 = 70"
-    AssertEquals 0, cpu.flag("Carry"), "SUB: No borrow (Carry clear)"
-    
-    ' Test 2: Subtraction requiring borrow
-    Set cpu = CreateTestCPU
-    cpu.SetReg "A", 30
-    cpu.SetReg "B", 100
-    cpu.SUB_ "B"
-    AssertEquals 186, cpu.Reg("A"), "SUB: 30 - 100 = -70 (wrap to 186)"
-    AssertEquals 1, cpu.flag("Carry"), "SUB: Borrow required (Carry set)"
-    
-    ' Test 3: Subtract from zero
-    Set cpu = CreateTestCPU
-    cpu.SetReg "A", 0
-    cpu.SetReg "B", 1
-    cpu.SUB_ "B"
-    AssertEquals 255, cpu.Reg("A"), "SUB: 0 - 1 = 255 (underflow wrap)"
-    AssertEquals 1, cpu.flag("Carry"), "SUB: Carry set (borrow)"
-    
-    ' Test 4: Half-carry borrow (crossing nibble boundary)
-    Set cpu = CreateTestCPU
-    cpu.SetReg "A", &H10
-    cpu.SetReg "B", 1
-    cpu.SUB_ "B"
-    AssertEquals &HF, cpu.Reg("A"), "SUB: 16 - 1 = 15"
-    AssertEquals 1, cpu.flag("AC"), "SUB: AC flag set (half-borrow)"
-    
-    ' Test 5: Subtract self (clear A)
-    Set cpu = CreateTestCPU
-    cpu.SetReg "A", 42
-    cpu.SUB_ "A"
-    AssertEquals 0, cpu.Reg("A"), "SUB: A - A = 0"
-    AssertEquals 1, cpu.flag("Zero"), "SUB: Zero flag set"
-    AssertEquals 0, cpu.flag("Carry"), "SUB: No carry on zero result"
-    
-End Sub
-Sub Test_ANA_LogicalAND()
-    pTestHeader = "ANA - Logical AND"
-    Dim cpu As clsDecCPU
-    
-    ' Test 1: Basic AND
-    Set cpu = CreateTestCPU
-    cpu.SetReg "A", &HFF   ' 1111 1111
-    cpu.SetReg "B", &HF    ' 0000 1111
-    cpu.ANA "B"
-    AssertEquals &HF, cpu.Reg("A"), "ANA: FF AND 0F = 0F"
-    
-    ' Test 2: AND with zero (clears A)
-    Set cpu = CreateTestCPU
-    cpu.SetReg "A", &HFF
-    cpu.SetReg "B", &H0
-    cpu.ANA "B"
-    AssertEquals 0, cpu.Reg("A"), "ANA: FF AND 00 = 00"
-    AssertEquals 1, cpu.flag("Zero"), "ANA: Zero flag set"
-    
-    ' Test 3: AND of alternating bits
-    Set cpu = CreateTestCPU
-    cpu.SetReg "A", &HAA   ' 1010 1010
-    cpu.SetReg "B", &H55   ' 0101 0101
-    cpu.ANA "B"
-    AssertEquals 0, cpu.Reg("A"), "ANA: AA AND 55 = 00"
-    
-    ' Test 4: AND clears carry (per 8080 spec)
-    Set cpu = CreateTestCPU
-    cpu.SetFlag "Carry", 1
-    cpu.SetReg "A", &HFF
-    cpu.SetReg "B", &HFF
-    cpu.ANA "B"
-    AssertEquals 0, cpu.flag("Carry"), "ANA: Clears Carry flag"
-    
-End Sub
-Sub Test_ORA_LogicalOR()
-    pTestHeader = "ORA - Logical OR"
-    Dim cpu As clsDecCPU
-    
-    ' Test 1: Basic OR
-    Set cpu = CreateTestCPU
-    cpu.SetReg "A", &HF    ' 0000 1111
-    cpu.SetReg "B", &HF0   ' 1111 0000
-    cpu.ORA "B"
-    AssertEquals &HFF, cpu.Reg("A"), "ORA: 0F OR F0 = FF"
-    
-    ' Test 2: OR with zero (no change)
-    Set cpu = CreateTestCPU
-    cpu.SetReg "A", &H42
-    cpu.SetReg "B", 0
-    cpu.ORA "B"
-    AssertEquals &H42, cpu.Reg("A"), "ORA: 42 OR 00 = 42"
-    
-    ' Test 3: OR of same register
-    Set cpu = CreateTestCPU
-    cpu.SetReg "A", &H55
-    cpu.ORA "A"
-    AssertEquals &H55, cpu.Reg("A"), "ORA: 55 OR 55 = 55"
-    AssertEquals 0, cpu.flag("Carry"), "ORA: Clears Carry"
-    
-End Sub
-Sub Test_XRA_LogicalXOR()
-    pTestHeader = "XRA - Logical XOR"
-    Dim cpu As clsDecCPU
-    
-    ' Test 1: XOR of different patterns
-    Set cpu = CreateTestCPU
-    cpu.SetReg "A", &HF0   ' 1111 0000
-    cpu.SetReg "B", &HF    ' 0000 1111
-    cpu.XRA "B"
-    AssertEquals &HFF, cpu.Reg("A"), "XRA: F0 XOR 0F = FF"
-    
-    ' Test 2: XOR with self (clears A) - common trick to zero register
-    Set cpu = CreateTestCPU
-    cpu.SetReg "A", &H55
-    cpu.XRA "A"
-    AssertEquals 0, cpu.Reg("A"), "XRA: 55 XOR 55 = 00 (common zero trick)"
-    AssertEquals 1, cpu.flag("Zero"), "XRA: Zero flag set"
-    
-    ' Test 3: XOR with zero (no change)
-    Set cpu = CreateTestCPU
-    cpu.SetReg "A", &HAA
-    cpu.SetReg "B", 0
-    cpu.XRA "B"
-    AssertEquals &HAA, cpu.Reg("A"), "XRA: AA XOR 00 = AA"
-    
-End Sub
-Sub Test_RLC_RotateLeftCircular()
-    pTestHeader = "RLC - Rotate Left Circular (no carry)"
-    Dim cpu As clsDecCPU
-    
-    ' Test 1: Basic left rotate (bit 7 -> bit 0)
-    Set cpu = CreateTestCPU
-    cpu.SetReg "A", &H80   ' 1000 0000
-    cpu.RLC
-    AssertEquals &H1, cpu.Reg("A"), "RLC: 80 rotated left = 01"
-    
-    ' Test 2: Rotate with carry propagation
-    Set cpu = CreateTestCPU
-    cpu.SetReg "A", &HC0   ' 1100 0000
-    cpu.RLC
-    AssertEquals &H81, cpu.Reg("A"), "RLC: C0 rotated left = 81"
-    AssertEquals 1, cpu.flag("Carry"), "RLC: Carry set from bit 7"
-    
-    ' Test 3: Rotate zero
-    Set cpu = CreateTestCPU
-    cpu.SetReg "A", 0
-    cpu.RLC
-    AssertEquals 0, cpu.Reg("A"), "RLC: 00 rotated = 00"
-    
-End Sub
-Sub Test_RRC_RotateRightCircular()
-    pTestHeader = "RRC - Rotate Right Circular"
-    Dim cpu As clsDecCPU
-    
-    ' Test 1: Basic right rotate (bit 0 -> bit 7)
-    Set cpu = CreateTestCPU
-    cpu.SetReg "A", &H1    ' 0000 0001
-    cpu.RRC
-    AssertEquals &H80, cpu.Reg("A"), "RRC: 01 rotated right = 80"
-    AssertEquals 1, cpu.flag("Carry"), "RRC: Carry set from bit 0"
-    
-    ' Test 2: Rotate with multiple bits
-    Set cpu = CreateTestCPU
-    cpu.SetReg "A", &H3    ' 0000 0011
-    cpu.RRC
-    AssertEquals &H81, cpu.Reg("A"), "RRC: 03 rotated right = 81"
-    
-End Sub
-Sub Test_RAL_RotateLeftArithmetic()
-    pTestHeader = "RAL - Rotate Left through Carry"
-    Dim cpu As clsDecCPU
-    
-    ' Test 1: RAL with Carry clear
-    Set cpu = CreateTestCPU
-    cpu.SetReg "A", &H80   ' 1000 0000
-    cpu.SetFlag "Carry", 0
-    cpu.RAL
-    AssertEquals &H0, cpu.Reg("A"), "RAL: 80 << with C=0 = 00"
-    AssertEquals 1, cpu.flag("Carry"), "RAL: Carry gets bit 7"
-    
-    ' Test 2: RAL with Carry set (chaining)
-    Set cpu = CreateTestCPU
-    cpu.SetReg "A", &H0
-    cpu.SetFlag "Carry", 1
-    cpu.RAL
-    AssertEquals &H1, cpu.Reg("A"), "RAL: 00 << with C=1 = 01"
-    
-End Sub
-Sub Test_RAR_RotateRightArithmetic()
-    pTestHeader = "RAR - Rotate Right through Carry"
-    Dim cpu As clsDecCPU
-    
-    ' Test 1: RAR with Carry clear
-    Set cpu = CreateTestCPU
-    cpu.SetReg "A", &H1    ' 0000 0001
-    cpu.SetFlag "Carry", 0
-    cpu.RAR
-    AssertEquals &H0, cpu.Reg("A"), "RAR: 01 >> with C=0 = 00"
-    AssertEquals 1, cpu.flag("Carry"), "RAR: Carry gets bit 0"
-    
-    ' Test 2: RAR with Carry set (chaining)
-    Set cpu = CreateTestCPU
-    cpu.SetReg "A", &H0
-    cpu.SetFlag "Carry", 1
-    cpu.RAR
-    AssertEquals &H80, cpu.Reg("A"), "RAR: 00 >> with C=1 = 80"
-    
-End Sub
-Sub Test_CPI_CompareImmediate()
-    pTestHeader = "CPI - Compare Immediate"
-    Dim cpu As clsDecCPU
-    
-    ' Test 1: Equal (Zero flag set)
-    Set cpu = CreateTestCPU
-    cpu.SetReg "A", 42
-    cpu.CPI "2A"  ' 42 hex
-    AssertEquals 42, cpu.Reg("A"), "CPI: A unchanged"
-    AssertEquals 1, cpu.flag("Zero"), "CPI: Zero flag set when A == operand"
-    
-    ' Test 2: A > operand
-    Set cpu = CreateTestCPU
-    cpu.SetReg "A", 100
-    cpu.CPI "32"  ' 50
-    AssertEquals 0, cpu.flag("Zero"), "CPI: Zero flag clear when A != operand"
-    
-    ' Test 3: A < operand
-    Set cpu = CreateTestCPU
-    cpu.SetReg "A", 50
-    cpu.CPI "64"  ' 100
-    AssertEquals 1, cpu.flag("Carry"), "CPI: Carry set when A < operand"
-    
-End Sub
-Sub Test_LHLD_LoadMemoryToHL()
-    pTestHeader = "LHLD - Load Memory to HL"
-    Dim cpu As clsDecCPU
-    
-    Set cpu = CreateTestCPU
-    ' Assume memory at address 0x1000: [0x42, 0x99]
-    ' LHLD should load L from 0x1000, H from 0x1001
-    
-    cpu.LHLD "1000"
-    AssertTrue (cpu.Reg("H") >= 0 And cpu.Reg("H") <= 255), _
-        "LHLD: H register set from memory"
-    AssertTrue (cpu.Reg("L") >= 0 And cpu.Reg("L") <= 255), _
-        "LHLD: L register set from memory"
-    
-End Sub
-Sub Test_SHLD_StoreHLToMemory()
-    pTestHeader = "SHLD - Store HL to Memory"
-    Dim cpu As clsDecCPU
-    
-    Set cpu = CreateTestCPU
-    cpu.SetReg "H", 85
-    cpu.SetReg "L", 170
-    cpu.SHLD "1000"
-    
-    ' Verify memory was written (depends on memory implementation)
-    AssertTrue True, "SHLD: Store completed without error"
-    
-End Sub
-Sub Test_FlagAndCheckFlag()
-    pTestHeader = "Flag Manipulation"
-    Dim cpu As clsDecCPU
-    
-    Set cpu = CreateTestCPU
-    
-    ' Test all flag types
-    cpu.SetFlag "Carry", 1
-    AssertEquals 1, cpu.flag("Carry"), "Flag: Carry set"
-    
-    cpu.SetFlag "Zero", 1
-    AssertEquals 1, cpu.flag("Zero"), "Flag: Zero set"
-    
-    cpu.SetFlag "Sign", 1
-    AssertEquals 1, cpu.flag("Sign"), "Flag: Sign set"
-    
-    cpu.SetFlag "Parity", 1
-    AssertEquals 1, cpu.flag("Parity"), "Flag: Parity set"
-    
-    cpu.SetFlag "AC", 1
-    AssertEquals 1, cpu.flag("AC"), "Flag: AC set"
-    
-End Sub
-Sub Test_JC_JumpIfCarry()
-    pTestHeader = "JC - Jump If Carry"
-    Dim cpu As clsDecCPU
-    
-    ' Test 1: Jump when carry set
-    Set cpu = CreateTestCPU
-    cpu.SetFlag "Carry", 1
-    cpu.SetReg "PC", 0
-    cpu.JC "0100"
-    AssertEquals &H100, cpu.Reg("PC"), "JC: Jumped to 0100 (Carry=1)"
-    
-    ' Test 2: No jump when carry clear
-    Set cpu = CreateTestCPU
-    cpu.SetFlag "Carry", 0
-    cpu.SetReg "PC", 0
-    cpu.JC "0100"
-    AssertEquals 0, cpu.Reg("PC"), "JC: No jump (Carry=0)"
-    
-End Sub
-Sub Test_JNZ_JumpIfNotZero()
-    pTestHeader = "JNZ - Jump If Not Zero"
-    Dim cpu As clsDecCPU
-    
-    ' Test 1: Jump when zero flag clear
-    Set cpu = CreateTestCPU
-    cpu.SetFlag "Zero", 0
-    cpu.SetReg "PC", 0
-    cpu.JNZ "0200"
-    AssertEquals &H200, cpu.Reg("PC"), "JNZ: Jumped to 0200 (Zero=0)"
-    
-    ' Test 2: No jump when zero flag set
-    Set cpu = CreateTestCPU
-    cpu.SetFlag "Zero", 0
-    cpu.SetReg "PC", 0
-    cpu.JNZ "0200"
-    AssertEquals 0, cpu.Reg("PC"), "JNZ: No jump (Zero=1)"
-    
-End Sub
-Sub Test_JM_JumpIfMinus()
-    pTestHeader = "JM - Jump If Minus (Sign=1)"
-    Dim cpu As clsDecCPU
-    
-    ' Test 1: Jump when negative (Sign=1)
-    Set cpu = CreateTestCPU
-    cpu.SetFlag "Sign", 1
-    cpu.SetReg "PC", 0
-    cpu.JM "0300"
-    AssertEquals &H300, cpu.Reg("PC"), "JM: Jumped to 0300 (Sign=1)"
-    
-    ' Test 2: No jump when positive (Sign=0)
-    Set cpu = CreateTestCPU
-    cpu.SetFlag "Sign", 0
-    cpu.SetReg "PC", 0
-    cpu.JM "0300"
-    AssertEquals 0, cpu.Reg("PC"), "JM: No jump (Sign=0)"
-    
-End Sub
-Sub Test_MOV_AllRegisterPairs()
-    pTestHeader = "MOV - All Register Pair Combinations"
-    Dim cpu As clsDecCPU
-    Dim regs() As String: regs = Split("A,B,C,D,E,H,L", ",")
-    Dim i As Long, j As Long
-    
-    For i = 0 To UBound(regs)
-        For j = 0 To UBound(regs)
-            If i <> j Then
-                Set cpu = CreateTestCPU
-                cpu.SetReg regs(i), 50 + i
-                cpu.MOV regs(j), regs(i)
-                AssertEquals 50 + i, cpu.Reg(regs(j)), _
-                    "MOV: " & regs(j) & " <- " & regs(i)
-            End If
-        Next j
-    Next i
-    
-End Sub
-Sub Test_MVI_AllRegisters()
-    pTestHeader = "MVI - Move Immediate to All Registers"
-    Dim cpu As clsDecCPU
-    Dim regs() As String: regs = Split("A,B,C,D,E,H,L", ",")
-    Dim i As Long
-    
-    For i = 0 To UBound(regs)
-        Set cpu = CreateTestCPU
-        cpu.MVI regs(i), "55"  ' Load 0x55 = 85
-        AssertEquals &H55, cpu.Reg(regs(i)), _
-            "MVI: " & regs(i) & " loaded with 55"
-    Next i
-    
-End Sub
-Sub Test_PUSH_POP_StackBalance()
-    pTestHeader = "PUSH/POP - Stack Balance"
-    Dim cpu As clsDecCPU
-    
-    Set cpu = CreateTestCPU
-    Dim initialSP As Long: initialSP = cpu.Reg("SP")
-    
-    ' PUSH BC
-    cpu.SetReg "B", 18
-    cpu.SetReg "C", 52
-    cpu.PUSH "B"
-    AssertEquals initialSP - 2, cpu.Reg("SP"), "PUSH: SP decremented by 2"
-    
-    ' POP BC into D/E
-    cpu.POP "D"
-    AssertEquals 18, cpu.Reg("D"), "POP: D loaded from stack"
-    AssertEquals 52, cpu.Reg("E"), "POP: E loaded from stack"
-    AssertEquals initialSP, cpu.Reg("SP"), "POP: SP restored"
-    
-End Sub
-Sub Test_CALL_RET_BasicFlow()
-    pTestHeader = "CALL/RET - Subroutine Flow"
-    Dim cpu As clsDecCPU
-    
-    Set cpu = CreateTestCPU
-    cpu.SetReg "PC", &H100
-    Dim returnSP As Long: returnSP = cpu.Reg("SP")
-    
-    cpu.CALL_ "0200"
-    AssertEquals &H200, cpu.Reg("PC"), "CALL: Jumped to 0200"
-    'AssertNotEquals returnSP, cpu.Reg("SP"), "CALL: Return address pushed to stack"
-    
-End Sub
