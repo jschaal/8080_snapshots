@@ -1,0 +1,298 @@
+Mnemonic,OP1,OP2,Hex,Bytes,Description,Category,Prefix,Base_Opcode
+NOP,,00,1,No operation,Basic,,00
+LD,B,C,01,3,Load register pair BC immediate,Register_Pair,,01
+LD,(BC),A,02,1,Store accumulator at (BC),Indirect,,02
+INC,BC,,03,1,Increment register pair BC,16bit,,03
+INC,B,,04,1,Increment register B,8bit,,04
+DEC,B,,05,1,Decrement register B,8bit,,05
+LD,B,DATA,06,2,Load immediate to B,Immediate,,06
+RLCA,,07,1,Rotate A left circular,Rotate,,07
+EX,AF,AF',08,1,Exchange AF with shadow AF',Shadow,,08
+ADD,HL,BC,09,1,Add BC to HL,16bit,,09
+LD,A,(BC),0A,1,Load A from (BC),Indirect,,0A
+DEC,BC,,0B,1,Decrement register pair BC,16bit,,0B
+INC,C,,0C,1,Increment register C,8bit,,0C
+DEC,C,,0D,1,Decrement register C,8bit,,0D
+LD,C,DATA,0E,2,Load immediate to C,Immediate,,0E
+RRCA,,0F,1,Rotate A right circular,Rotate,,0F
+DJNZ,OFFSET,,10,2,Decrement B and jump if non-zero,Jump,,10
+LD,D,E,11,3,Load register pair DE immediate,Register_Pair,,11
+LD,(DE),A,12,1,Store accumulator at (DE),Indirect,,12
+INC,DE,,13,1,Increment register pair DE,16bit,,13
+INC,D,,14,1,Increment register D,8bit,,14
+DEC,D,,15,1,Decrement register D,8bit,,15
+LD,D,DATA,16,2,Load immediate to D,Immediate,,16
+RLA,,17,1,Rotate A left through carry,Rotate,,17
+JR,OFFSET,,18,2,Jump relative unconditional,Jump,,18
+ADD,HL,DE,19,1,Add DE to HL,16bit,,19
+LD,A,(DE),1A,1,Load A from (DE),Indirect,,1A
+DEC,DE,,1B,1,Decrement register pair DE,16bit,,1B
+INC,E,,1C,1,Increment register E,8bit,,1C
+DEC,E,,1D,1,Decrement register E,8bit,,1D
+LD,E,DATA,1E,2,Load immediate to E,Immediate,,1E
+RRA,,1F,1,Rotate A right through carry,Rotate,,1F
+JR,NZ,OFFSET,20,2,Jump relative if not zero,Jump,,20
+LD,H,L,21,3,Load register pair HL immediate,Register_Pair,,21
+LD,(HL),A,22,3,Store HL at address,Indirect,,22
+INC,HL,,23,1,Increment register pair HL,16bit,,23
+INC,H,,24,1,Increment register H,8bit,,24
+DEC,H,,25,1,Decrement register H,8bit,,25
+LD,H,DATA,26,2,Load immediate to H,Immediate,,26
+DAA,,27,1,Decimal adjust accumulator,Arithmetic,,27
+JR,Z,OFFSET,28,2,Jump relative if zero,Jump,,28
+ADD,HL,HL,29,1,Add HL to HL,16bit,,29
+LD,A,(HL),2A,3,Load from address to HL,Indirect,,2A
+DEC,HL,,2B,1,Decrement register pair HL,16bit,,2B
+INC,L,,2C,1,Increment register L,8bit,,2C
+DEC,L,,2D,1,Decrement register L,8bit,,2D
+LD,L,DATA,2E,2,Load immediate to L,Immediate,,2E
+CPL,,2F,1,Complement accumulator,Arithmetic,,2F
+JR,NC,OFFSET,30,2,Jump relative if not carry,Jump,,30
+LD,IX,DATA,31,4,Load IX register immediate,Register_Index,,31
+LD,(DATA),HL,32,3,Store HL at address,Indirect,,32
+INC,SP,,33,1,Increment stack pointer,16bit,,33
+INC,(HL),,34,1,Increment at (HL),Indirect,,34
+DEC,(HL),,35,1,Decrement at (HL),Indirect,,35
+LD,(HL),DATA,36,2,Load immediate at (HL),Immediate,,36
+SCF,,37,1,Set carry flag,Flag,,37
+JR,C,OFFSET,38,2,Jump relative if carry,Jump,,38
+ADD,HL,IX,39,1,Add IX to HL,16bit,,39
+LD,A,(DATA),3A,3,Load A from address,Indirect,,3A
+DEC,SP,,3B,1,Decrement stack pointer,16bit,,3B
+INC,A,,3C,1,Increment accumulator A,8bit,,3C
+DEC,A,,3D,1,Decrement accumulator A,8bit,,3D
+LD,A,DATA,3E,2,Load immediate to A,Immediate,,3E
+CCF,,3F,1,Complement carry flag,Flag,,3F
+LD,B,B,40,1,Move register to register,Register,,40
+LD,B,C,41,1,Move register C to B,Register,,41
+LD,B,D,42,1,Move register D to B,Register,,42
+LD,B,E,43,1,Move register E to B,Register,,43
+LD,B,H,44,1,Move register H to B,Register,,44
+LD,B,L,45,1,Move register L to B,Register,,45
+LD,B,(HL),46,1,Load from (HL) to B,Indirect,,46
+LD,B,A,47,1,Move A to B,Register,,47
+LD,C,B,48,1,Move B to C,Register,,48
+LD,C,C,49,1,Move register C to C,Register,,49
+LD,C,D,4A,1,Move register D to C,Register,,4A
+LD,C,E,4B,1,Move register E to C,Register,,4B
+LD,C,H,4C,1,Move register H to C,Register,,4C
+LD,C,L,4D,1,Move register L to C,Register,,4D
+LD,C,(HL),4E,1,Load from (HL) to C,Indirect,,4E
+LD,C,A,4F,1,Move A to C,Register,,4F
+LD,D,B,50,1,Move B to D,Register,,50
+LD,D,C,51,1,Move C to D,Register,,51
+LD,D,D,52,1,Move D to D,Register,,52
+LD,D,E,53,1,Move E to D,Register,,53
+LD,D,H,54,1,Move H to D,Register,,54
+LD,D,L,55,1,Move L to D,Register,,55
+LD,D,(HL),56,1,Load from (HL) to D,Indirect,,56
+LD,D,A,57,1,Move A to D,Register,,57
+LD,E,B,58,1,Move B to E,Register,,58
+LD,E,C,59,1,Move C to E,Register,,59
+LD,E,D,5A,1,Move D to E,Register,,5A
+LD,E,E,5B,1,Move E to E,Register,,5B
+LD,E,H,5C,1,Move H to E,Register,,5C
+LD,E,L,5D,1,Move L to E,Register,,5D
+LD,E,(HL),5E,1,Load from (HL) to E,Indirect,,5E
+LD,E,A,5F,1,Move A to E,Register,,5F
+LD,H,B,60,1,Move B to H,Register,,60
+LD,H,C,61,1,Move C to H,Register,,61
+LD,H,D,62,1,Move D to H,Register,,62
+LD,H,E,63,1,Move E to H,Register,,63
+LD,H,H,64,1,Move H to H,Register,,64
+LD,H,L,65,1,Move L to H,Register,,65
+LD,H,(HL),66,1,Load from (HL) to H,Indirect,,66
+LD,H,A,67,1,Move A to H,Register,,67
+LD,L,B,68,1,Move B to L,Register,,68
+LD,L,C,69,1,Move C to L,Register,,69
+LD,L,D,6A,1,Move D to L,Register,,6A
+LD,L,E,6B,1,Move E to L,Register,,6B
+LD,L,H,6C,1,Move H to L,Register,,6C
+LD,L,L,6D,1,Move L to L,Register,,6D
+LD,L,(HL),6E,1,Load from (HL) to L,Indirect,,6E
+LD,L,A,6F,1,Move A to L,Register,,6F
+LD,(HL),B,70,1,Store B at (HL),Indirect,,70
+LD,(HL),C,71,1,Store C at (HL),Indirect,,71
+LD,(HL),D,72,1,Store D at (HL),Indirect,,72
+LD,(HL),E,73,1,Store E at (HL),Indirect,,73
+LD,(HL),H,74,1,Store H at (HL),Indirect,,74
+LD,(HL),L,75,1,Store L at (HL),Indirect,,75
+HALT,,76,1,Halt processor,Control,,76
+LD,(HL),A,77,1,Store A at (HL),Indirect,,77
+LD,A,B,78,1,Move B to A,Register,,78
+LD,A,C,79,1,Move C to A,Register,,79
+LD,A,D,7A,1,Move D to A,Register,,7A
+LD,A,E,7B,1,Move E to A,Register,,7B
+LD,A,H,7C,1,Move H to A,Register,,7C
+LD,A,L,7D,1,Move L to A,Register,,7D
+LD,A,(HL),7E,1,Load from (HL) to A,Indirect,,7E
+LD,A,A,7F,1,Move A to A,Register,,7F
+ADD,A,B,80,1,Add B to A,Arithmetic,,80
+ADD,A,C,81,1,Add C to A,Arithmetic,,81
+ADD,A,D,82,1,Add D to A,Arithmetic,,82
+ADD,A,E,83,1,Add E to A,Arithmetic,,83
+ADD,A,H,84,1,Add H to A,Arithmetic,,84
+ADD,A,L,85,1,Add L to A,Arithmetic,,85
+ADD,A,(HL),86,1,Add (HL) to A,Indirect,,86
+ADD,A,A,87,1,Add A to A,Arithmetic,,87
+ADC,A,B,88,1,Add B to A with carry,Arithmetic,,88
+ADC,A,C,89,1,Add C to A with carry,Arithmetic,,89
+ADC,A,D,8A,1,Add D to A with carry,Arithmetic,,8A
+ADC,A,E,8B,1,Add E to A with carry,Arithmetic,,8B
+ADC,A,H,8C,1,Add H to A with carry,Arithmetic,,8C
+ADC,A,L,8D,1,Add L to A with carry,Arithmetic,,8D
+ADC,A,(HL),8E,1,Add (HL) to A with carry,Indirect,,8E
+ADC,A,A,8F,1,Add A to A with carry,Arithmetic,,8F
+SUB,A,B,90,1,Subtract B from A,Arithmetic,,90
+SUB,A,C,91,1,Subtract C from A,Arithmetic,,91
+SUB,A,D,92,1,Subtract D from A,Arithmetic,,92
+SUB,A,E,93,1,Subtract E from A,Arithmetic,,93
+SUB,A,H,94,1,Subtract H from A,Arithmetic,,94
+SUB,A,L,95,1,Subtract L from A,Arithmetic,,95
+SUB,A,(HL),96,1,Subtract (HL) from A,Indirect,,96
+SUB,A,A,97,1,Subtract A from A,Arithmetic,,97
+SBC,A,B,98,1,Subtract B from A with carry,Arithmetic,,98
+SBC,A,C,99,1,Subtract C from A with carry,Arithmetic,,99
+SBC,A,D,9A,1,Subtract D from A with carry,Arithmetic,,9A
+SBC,A,E,9B,1,Subtract E from A with carry,Arithmetic,,9B
+SBC,A,H,9C,1,Subtract H from A with carry,Arithmetic,,9C
+SBC,A,L,9D,1,Subtract L from A with carry,Arithmetic,,9D
+SBC,A,(HL),9E,1,Subtract (HL) from A with carry,Indirect,,9E
+SBC,A,A,9F,1,Subtract A from A with carry,Arithmetic,,9F
+AND,A,B,A0,1,Logical AND B with A,Logical,,A0
+AND,A,C,A1,1,Logical AND C with A,Logical,,A1
+AND,A,D,A2,1,Logical AND D with A,Logical,,A2
+AND,A,E,A3,1,Logical AND E with A,Logical,,A3
+AND,A,H,A4,1,Logical AND H with A,Logical,,A4
+AND,A,L,A5,1,Logical AND L with A,Logical,,A5
+AND,A,(HL),A6,1,Logical AND (HL) with A,Indirect,,A6
+AND,A,A,A7,1,Logical AND A with A,Logical,,A7
+XOR,A,B,A8,1,Logical XOR B with A,Logical,,A8
+XOR,A,C,A9,1,Logical XOR C with A,Logical,,A9
+XOR,A,D,AA,1,Logical XOR D with A,Logical,,AA
+XOR,A,E,AB,1,Logical XOR E with A,Logical,,AB
+XOR,A,H,AC,1,Logical XOR H with A,Logical,,AC
+XOR,A,L,AD,1,Logical XOR L with A,Logical,,AD
+XOR,A,(HL),AE,1,Logical XOR (HL) with A,Indirect,,AE
+XOR,A,A,AF,1,Logical XOR A with A,Logical,,AF
+OR,A,B,B0,1,Logical OR B with A,Logical,,B0
+OR,A,C,B1,1,Logical OR C with A,Logical,,B1
+OR,A,D,B2,1,Logical OR D with A,Logical,,B2
+OR,A,E,B3,1,Logical OR E with A,Logical,,B3
+OR,A,H,B4,1,Logical OR H with A,Logical,,B4
+OR,A,L,B5,1,Logical OR L with A,Logical,,B5
+OR,A,(HL),B6,1,Logical OR (HL) with A,Logical,,B6
+OR,A,A,B7,1,Logical OR A with A,Logical,,B7
+CP,A,B,B8,1,Compare B with A,Compare,,B8
+CP,A,C,B9,1,Compare C with A,Compare,,B9
+CP,A,D,BA,1,Compare D with A,Compare,,BA
+CP,A,E,BB,1,Compare E with A,Compare,,BB
+CP,A,H,BC,1,Compare H with A,Compare,,BC
+CP,A,L,BD,1,Compare L with A,Compare,,BD
+CP,A,(HL),BE,1,Compare (HL) with A,Compare,,BE
+CP,A,A,BF,1,Compare A with A,Compare,,BF
+RET,NZ,,C0,1,Return if not zero,Control,,C0
+POP,BC,,C1,1,Pop BC from stack,Stack,,C1
+JP,NZ,ADDRESS,C2,3,Jump if not zero,Jump,,C2
+JP,,ADDRESS,C3,3,Jump unconditional,Jump,,C3
+CALL,NZ,ADDRESS,C4,3,Call if not zero,Control,,C4
+PUSH,BC,,C5,1,Push BC to stack,Stack,,C5
+ADD,A,DATA,C6,2,Add immediate to A,Arithmetic,,C6
+RST,,0,C7,1,Reset vector 0,Control,,C7
+RET,Z,,C8,1,Return if zero,Control,,C8
+RET,,C9,1,Return unconditional,Control,,C9
+JP,Z,ADDRESS,CA,3,Jump if zero,Jump,,CA
+PREFIX,CB,,CB,2,CB prefix for bit operations,Prefix,CB,CB
+CALL,Z,ADDRESS,CC,3,Call if zero,Control,,CC
+CALL,,ADDRESS,CD,3,Call unconditional,Control,,CD
+ADC,A,DATA,CE,2,Add immediate to A with carry,Arithmetic,,CE
+RST,,1,CF,1,Reset vector 1,Control,,CF
+RET,NC,,D0,1,Return if not carry,Control,,D0
+POP,DE,,D1,1,Pop DE from stack,Stack,,D1
+JP,NC,ADDRESS,D2,3,Jump if not carry,Jump,,D2
+OUT,,DATA,D3,2,Output to port,I_O,,D3
+CALL,NC,ADDRESS,D4,3,Call if not carry,Control,,D4
+PUSH,DE,,D5,1,Push DE to stack,Stack,,D5
+SUB,A,DATA,D6,2,Subtract immediate from A,Arithmetic,,D6
+RST,,2,D7,1,Reset vector 2,Control,,D7
+RET,C,,D8,1,Return if carry,Control,,D8
+EXX,,,D9,1,Exchange all registers with shadow,Shadow,,D9
+JP,C,ADDRESS,DA,3,Jump if carry,Jump,,DA
+IN,A,,DB,2,Input from port,I_O,,DB
+CALL,C,ADDRESS,DC,3,Call if carry,Control,,DC
+PREFIX,DD,,DD,2,DD prefix for IX operations,Prefix,DD,DD
+SBC,A,DATA,DE,2,Subtract immediate from A with carry,Arithmetic,,DE
+RST,,3,DF,1,Reset vector 3,Control,,DF
+RET,PO,,E0,1,Return if parity odd,Control,,E0
+POP,HL,,E1,1,Pop HL from stack,Stack,,E1
+JP,PO,ADDRESS,E2,3,Jump if parity odd,Jump,,E2
+EX,(SP),HL,,E3,1,Exchange (SP) with HL,Stack,,E3
+CALL,PO,ADDRESS,E4,3,Call if parity odd,Control,,E4
+PUSH,HL,,E5,1,Push HL to stack,Stack,,E5
+AND,A,DATA,E6,2,Logical AND immediate with A,Logical,,E6
+RST,,4,E7,1,Reset vector 4,Control,,E7
+RET,PE,,E8,1,Return if parity even,Control,,E8
+JP,(HL),,E9,1,Jump indirect via HL,Jump,,E9
+JP,PE,ADDRESS,EA,3,Jump if parity even,Jump,,EA
+EX,DE,HL,,EB,1,Exchange DE with HL,Register,,EB
+CALL,PE,ADDRESS,EC,3,Call if parity even,Control,,EC
+PREFIX,ED,,ED,2,ED prefix for extended operations,Prefix,ED,ED
+XOR,A,DATA,EE,2,Logical XOR immediate with A,Logical,,EE
+RST,,5,EF,1,Reset vector 5,Control,,EF
+RET,P,,F0,1,Return if positive,Control,,F0
+POP,AF,,F1,1,Pop AF from stack,Stack,,F1
+JP,P,ADDRESS,F2,3,Jump if positive,Jump,,F2
+DI,,,F3,1,Disable interrupts,Control,,F3
+CALL,P,ADDRESS,F4,3,Call if positive,Control,,F4
+PUSH,AF,,F5,1,Push AF to stack,Stack,,F5
+OR,A,DATA,F6,2,Logical OR immediate with A,Logical,,F6
+RST,,6,F7,1,Reset vector 6,Control,,F7
+RET,M,,F8,1,Return if minus,Control,,F8
+LD,SP,HL,,F9,1,Load SP from HL,Register,,F9
+JP,M,ADDRESS,FA,3,Jump if minus,Jump,,FA
+EI,,,FB,1,Enable interrupts,Control,,FB
+CALL,M,ADDRESS,FC,3,Call if minus,Control,,FC
+PREFIX,FD,,FD,2,FD prefix for IY operations,Prefix,FD,FD
+CP,A,DATA,FE,2,Compare immediate with A,Compare,,FE
+RST,,7,FF,1,Reset vector 7,Control,,FF
+BIT,0,(HL),46,2,Test bit 0 at (HL),Bit,CB,46
+BIT,1,(HL),4E,2,Test bit 1 at (HL),Bit,CB,4E
+BIT,2,(HL),56,2,Test bit 2 at (HL),Bit,CB,56
+BIT,3,(HL),5E,2,Test bit 3 at (HL),Bit,CB,5E
+BIT,4,(HL),66,2,Test bit 4 at (HL),Bit,CB,66
+BIT,5,(HL),6E,2,Test bit 5 at (HL),Bit,CB,6E
+BIT,6,(HL),76,2,Test bit 6 at (HL),Bit,CB,76
+BIT,7,(HL),7E,2,Test bit 7 at (HL),Bit,CB,7E
+BIT,0,A,47,2,Test bit 0 in A,Bit,CB,47
+BIT,1,A,4F,2,Test bit 1 in A,Bit,CB,4F
+BIT,2,A,57,2,Test bit 2 in A,Bit,CB,57
+BIT,3,A,5F,2,Test bit 3 in A,Bit,CB,5F
+BIT,4,A,67,2,Test bit 4 in A,Bit,CB,67
+BIT,5,A,6F,2,Test bit 5 in A,Bit,CB,6F
+BIT,6,A,77,2,Test bit 6 in A,Bit,CB,77
+BIT,7,A,7F,2,Test bit 7 in A,Bit,CB,7F
+RES,0,A,87,2,Reset bit 0 in A,Bit,CB,87
+RES,1,A,8F,2,Reset bit 1 in A,Bit,CB,8F
+RES,2,A,97,2,Reset bit 2 in A,Bit,CB,97
+RES,3,A,9F,2,Reset bit 3 in A,Bit,CB,9F
+RES,4,A,A7,2,Reset bit 4 in A,Bit,CB,A7
+RES,5,A,AF,2,Reset bit 5 in A,Bit,CB,AF
+RES,6,A,B7,2,Reset bit 6 in A,Bit,CB,B7
+RES,7,A,BF,2,Reset bit 7 in A,Bit,CB,BF
+SET,0,A,C7,2,Set bit 0 in A,Bit,CB,C7
+SET,1,A,CF,2,Set bit 1 in A,Bit,CB,CF
+SET,2,A,D7,2,Set bit 2 in A,Bit,CB,D7
+SET,3,A,DF,2,Set bit 3 in A,Bit,CB,DF
+SET,4,A,E7,2,Set bit 4 in A,Bit,CB,E7
+SET,5,A,EF,2,Set bit 5 in A,Bit,CB,EF
+SET,6,A,F7,2,Set bit 6 in A,Bit,CB,F7
+SET,7,A,FF,2,Set bit 7 in A,Bit,CB,FF
+LD,(IX+OFFSET),A,DD 77,3,Store A at IX+offset,Offset,DD,77
+LD,A,(IX+OFFSET),DD 7E,3,Load A from IX+offset,Offset,DD,7E
+LD,(IY+OFFSET),A,FD 77,3,Store A at IY+offset,Offset,FD,77
+LD,A,(IY+OFFSET),FD 7E,3,Load A from IY+offset,Offset,FD,7E
+ADD,(IX+OFFSET),,DD 86,3,Add at (IX+offset) to A,Offset,DD,86
+LDIR,,,ED B0,2,Load and increment repeat,Block,ED,B0
+LDDR,,,ED B8,2,Load and decrement repeat,Block,ED,B8
+CPIR,,,ED B1,2,Compare and increment repeat,Block,ED,B1
+CPDR,,,ED B9,2,Compare and decrement repeat,Block,ED,B9
