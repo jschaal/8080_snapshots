@@ -1,6 +1,6 @@
 === VBA EXPORT: Base Model Current.xlsm ===
-Timestamp: 3/12/2026 3:08:28 PM
-Version: 2.05
+Timestamp: 3/9/2026 6:58:08 PM
+Version: 2.02
 ================================================================================
 
 ''' Component: ThisWorkbook
@@ -1320,7 +1320,7 @@ Public Function RunOpcode(ByVal opcode As String, _
         Case "JMP":  result = Me.JMP(op1)                 ' 300xx
         Case "JNC":  result = Me.JNC(op1)
         Case "JNZ":  result = Me.JNZ(op1)
-        Case "JP":   result = Me.JP(op1, op2)              'redefined z80 operation
+        Case "JP":   result = Me.JP(op1)
         Case "JPE":  result = Me.JPE(op1)
         Case "JPO":  result = Me.JPO(op1)
         Case "JZ":   result = Me.JZ(op1)
@@ -1373,6 +1373,7 @@ Public Function RunOpcode(ByVal opcode As String, _
         Case "CNZ": result = Me.CCOND("NZ", op1)
         Case "CC":  result = Me.CCOND("C", op1)
         Case "CNC": result = Me.CCOND("NC", op1)
+        Case "CP":  result = Me.CCOND("P", op1)
         Case "CM":  result = Me.CCOND("M", op1)
         Case "CPE": result = Me.CCOND("PE", op1)
         Case "CPO": result = Me.CCOND("PO", op1)
@@ -1405,7 +1406,6 @@ Public Function RunOpcode(ByVal opcode As String, _
         
         ' --- Unified Z80 LD Logic ---
         Case "LD": result = LD(op1, op2)
-        Case "CP": result = Me.CP(op1, op2)
         
         ' --- Bit Operations ---
         Case "BIT": result = Me.BIT(op1, op2)
@@ -1840,44 +1840,9 @@ Public Function CMP(ByVal op1 As String) As Long
 End Function
 ' --- CMP ---
 
-' ==============================================================================
-' CP (Integrated CP Opcode)
-' Z80 redefined this opcode for clarity
-' 8080: Call if Plus: CP Word
-' Z80:  Compare Option with Register A:  CP A (option)
-'       Native Z80 Operation is CALL P WORD
-' Usage: CP data
-
-Public Function CP(ByVal op1 As String, op2 As String) As Long
-    Dim errorBase As Long: errorBase = 185
-    Dim result As Long
-    '8080 CP: execute conditional CP
-    If op2 = "" And op1 <> "A" Then
-        CP = Me.CCOND("P", op1)
-        Exit Function
-    End If
-    'Z80:  this is z80 compare and not 8080 call if plus
-    If op1 = "A" Then
-        'Standard register to A comparisons - resuse existing 8080 compare
-        If usrIsRegister08Bit(op2) Then
-            CP = Me.CMP(op2)
-            Exit Function
-        End If
-        'CP A, BYTE which is equivalent to CPI BYTE in 8080
-        If usrValIsHexString(op2) Then
-            CP = Me.CPI(op2)
-            Exit Function
-        End If
-        'still need to implement other z80 CP ops such as CP A,(HL) and CP A, (IX+OFFSET)
-    End If
-    SetError errorBase, "CP: Invalid Operation: " & op1 & " " & op2
-    CP = errorBase
-End Function
 
 ' ==============================================================================
-' Redefined in Z80
-' Z80: New Compare and increment Block Operation
-' 8080: CPI (Compare Immediate with A)
+' CPI (Compare Immediate with A)
 ' Usage: CPI data
 ' Opcode:   11111110 (next byte is immediate)
 ' 8080:     2 bytes, 7 cycles
@@ -1901,14 +1866,7 @@ End Function
 Public Function CPI(ByVal op1 As String) As Long
     Dim errorBase As Long: errorBase = 200
     Dim imm8 As Variant
-    
-    'Assume this is a Z80 CPI and not a 8080 CPI
-    If op1 = "" Then
-        CPI = CPI_Z80
-        Exit Function
-    End If
 
-    '8080 Version of CPI: CPI BYTE
     imm8 = HlpResolveImm08(op1, errorBase, "CPI")
     If IsEmpty(imm8) Then CPI = errorBase: Exit Function
 
@@ -1916,11 +1874,6 @@ Public Function CPI(ByVal op1 As String) As Long
     CPI = 0
 End Function
 ' --- CPI ---
-Public Function CPI_Z80() As Long
-    Dim errorBase As Long: errorBase = 205
-    SetError errorBase, "CPI: Z80 Invalid Operation"
-    CPI_Z80 = errorBase
-End Function
 
 ' ==============================================================================
 ' DAA (Decimal Adjust Accumulator)
@@ -2583,8 +2536,7 @@ End Function
 
 
 ' ==============================================================================
-' Z80 Redefined: JP (all jump conditions)
-' 808: JP (Jump if Plus)
+' JP (Jump if Plus)
 ' Usage: JP address
 ' Opcode:   11110010
 ' 8080:     3 bytes, 10 cycles (5 if no jump)
@@ -2602,50 +2554,14 @@ End Function
 '   220: Missing operand
 '   221: Invalid address
 ' ==============================================================================
-Public Function JP(ByVal op1 As String, Optional ByVal op2 As String = "") As Long
-    '8080 instruction for jump if plus
-    Dim condition As String: condition = "JP"
-    'Z80 instruction for general jump conditions based on op1
-    If op2 <> "" Then
-       
-        ' direct jump
-        If op1 = "" Then
-            JP = JMP(op2)
-            Exit Function
-        End If
-        
-        ' indrect jump from (HL)
-        If op1 = "(HL)" Or op1 = "(IX)" Or op1 = "(IY)" Then
-            JP = PCHL(op1)
-            Exit Function
-        End If
-        
-        If op1 = "C" Then condition = "JC"
-        If op1 = "M" Then condition = "JM"
-        If op1 = "NC" Then condition = "JNC"
-        If op1 = "NZ" Then condition = "JNZ"
-        If op1 = "P" Then condition = "JP"
-        If op1 = "PE" Then condition = "JPE"
-        If op1 = "PO" Then condition = "JPO"
-        If op1 = "Z" Then condition = "JZ"
-        op1 = op2
-    End If
-    
-    If HlpEvaluateCondition(condition) Then
+Public Function JP(ByVal op1 As String) As Long
+    If HlpEvaluateCondition("JP") Then
         JP = JMP(op1)
     Else
         JP = 0
     End If
 End Function
 ' --- JP ---
-Public Function JP_indirect(ByVal op1 As String) As Long
-    Dim errorBase As Long: errorBase = 305
-    If op1 = "(HL)" Then
-        JP_indirect = PCHL()
-    End If
-    
-
-End Function
 
 ' ==============================================================================
 ' JPE (Jump if Parity Even)
@@ -3168,7 +3084,6 @@ End Function
 ' ---  ORI ---
 
 ' ==============================================================================
-' Z80 Extension: indirect jump to HL, IX, IY
 ' PCHL (Jump to Address in HL)
 ' Usage: PCHL
 ' Opcode:   11101001
@@ -3188,17 +3103,11 @@ End Function
 '
 ' Error Codes: None
 ' ==============================================================================
-Public Function PCHL(Optional ByVal registerPair As String = "(HL)") As Long
+Public Function PCHL() As Long
     Dim hl As Long
     Dim addRec As clsAddrRecord
-    Select Case registerPair
-        Case "(HL)"
-            hl = ((pRegs("H") And 255) * 256&) + (pRegs("L") And 255)
-        Case "(IX)"
-            hl = pRegs("IX")
-        Case "(IY)"
-            hl = pRegs("IY")
-    End Select
+    hl = ((pRegs("H") And 255) * 256&) + (pRegs("L") And 255)
+    
     Set addRec = pAddressList.GetAddr(hl)
     SetPC addRec.clsAddressLast
     PCHL = 0
@@ -5114,7 +5023,7 @@ Public Sub SetReg16(ByVal regPair As String, ByVal value As Long)
         Case "SP": pRegs("SP") = val
         Case "PC": pRegs("PC") = val
     End Select
-    mUIRegsDirty = True
+    mUIFlagsDirty = True
 End Sub
 ' ==============================================================================
 ' Indexed Addressing: (IX+d) and (IY+d)
@@ -5163,7 +5072,7 @@ Private Function LD(ByVal op1 As String, ByVal op2 As String) As Long
             Exit Function
         End If
     ' 3. 16-Bit Register: LD HL, 1234H
-    ElseIf usrIsRegister16Bit(op1) Then
+    ElseIf Is16Bit(op1) Then
         SetReg16 op1, usrHexToDec(CStr(op2))
     ' 4. Standard 8-bit: LD A, B
     Else
@@ -5727,311 +5636,88 @@ Public Function HasUnitTest(instring As String) As Boolean
 End Function
 ' z80 additions
 ' Helper: Simple check to see if we are dealing with 16-bit register logic
-Public Function usrIsRegister16Bit(ByVal r As String) As Boolean
+Public Function Is16Bit(ByVal r As String) As Boolean
     Select Case UCase(Trim(r))
-        Case "BC", "DE", "HL", "IX", "IY", "SP", "AF", "BC'", "DE'", "HL'", "AF'": usrIsRegister16Bit = True
-        Case Else: usrIsRegister16Bit = False
+        Case "BC", "DE", "HL", "IX", "IY", "SP", "AF", "BC'", "DE'", "HL'", "AF'": Is16Bit = True
+        Case Else: Is16Bit = False
     End Select
 End Function
 
-Public Function HlpGetInstructionSize( _
-    ByVal mnem As String, _
-    Optional ByVal op1 As String = "", _
-    Optional ByVal op2 As String = "" _
-) As Long
+Public Function HlpGetInstructionSize(ByVal opcode As String, Optional ByVal op1 As String = "", Optional ByVal op2 As String = "") As Integer
+    opcode = UCase(Trim(opcode))
+    op1 = UCase(Trim(op1))
+    op2 = UCase(Trim(op2))
 
-    mnem = UCase$(Trim$(mnem))
-    op1 = UCase$(Trim$(op1))
-    op2 = UCase$(Trim$(op2))
+    ' --- 4-Byte Instructions (Z80 Indexed + Immediate) ---
+    ' Pattern: LD (IX+d), n
+    If opcode = "LD" And (InStr(op1, "IX") > 0 Or InStr(op1, "IY") > 0) And IsNumeric(Left(op2, 1)) Then
+        HlpGetInstructionSize = 4
+        Exit Function
+    End If
+    ' Pattern: BIT/SET/RES on Indexed (Z80)
+    If (opcode = "BIT" Or opcode = "SET" Or opcode = "RES") And (InStr(op2, "IX") > 0 Or InStr(op2, "IY") > 0) Then
+        HlpGetInstructionSize = 4
+        Exit Function
+    End If
 
-    ' Default: most instructions are 1 byte
-    Dim size As Long
-    size = 1
-
-    Select Case mnem
-
-        ' -------------------------------
-        ' Pseudo-ops / no code emitted
-        ' -------------------------------
-        Case "", "EQU"
-            size = 0
-
-        Case "DB"
-            size = Len(op1)   ' string payload already validated elsewhere
-
-        ' -------------------------------
-        ' 16-bit immediate
-        ' -------------------------------
-        Case "LXI", "JMP", "JC", "JNC", "JZ", "JNZ", _
-             "JM", "JPE", "JPO", "CALL", "LDA", "STA", _
-             "LHLD", "SHLD"
-            size = 3
-
-        ' -------------------------------
-        ' 16-bit Calls to Address (8080)
-        ' -------------------------------
-        Case "CC", "CM", "CNC", "CNZ", "CPE", "CPO", "CZ"
-            size = 3
-
-        ' -------------------------------
-        ' 8-bit immediate
-        ' -------------------------------
-        Case "MVI", "ADI", "ACI", "ANI", "ORI", "XRI", _
-             "CPI", "SUI", "SBI", "IN", "OUT", "PRI"
-            size = 2
-
-        ' -------------------------------
-        ' Relative jumps (Z80)
-        ' -------------------------------
-        Case "JR", "DJNZ"
-            size = 2
-
-        ' -------------------------------
-        ' BIT / SET / RES (Z80 CB-prefixed)
-        ' -------------------------------
-        Case "BIT", "SET", "RES"
-            size = 2
-
-        ' -------------------------------
-        ' LD family (needs operand inspection)
-        ' -------------------------------
+    ' --- 3-Byte Instructions (16-bit Immediates / Direct Addressing) ---
+    Select Case opcode
+        Case "JMP", "CALL", "JZ", "JNZ", "JC", "JNC", "JP", "JM", "JPE", "JPO", _
+             "CZ", "CNZ", "CC", "CNC", "CP", "CM", "CPE", "CPO", _
+             "STA", "LDA", "SHLD", "LHLD", "LXI"
+            HlpGetInstructionSize = 3: Exit Function
+            
         Case "LD"
-            size = HlpSizeLD(op1, op2)
-
-        ' -------------------------------
-        '  New Z80 operations
-        ' -------------------------------
-        Case "AND"
-            size = HlpSizeZ80Enhanced(mnem, op1, op2)
+            ' LXI BC, 1234H  or  LD BC, 1234H  or  LD IX, 1234H
+            If Is16Bit(op1) And Not IsRegister(op2) Then
+                HlpGetInstructionSize = 3: Exit Function
+            End If
+            ' LD A, (1234H)
+            If InStr(op2, "(") > 0 And Not (InStr(op2, "IX") > 0 Or InStr(op2, "IY") > 0 Or InStr(op2, "HL") > 0) Then
+                HlpGetInstructionSize = 3: Exit Function
+            End If
             
-        ' New Block Operations
-        Case "CPD", "CPDR", "CPIR", "IND", "INDR", "INI", "INIR", "LDD", "LDDR", "LDI", "LDIR", "OTDR", "OTIR", "OUTD", "OUTI"
-            size = 2
-        
-        ' New Z80 Shift and Negate Bit Operations
-        ' Prefix + opcdode
-        Case "NEG", "RETI", "RETN", "RL", "RLD", "RR", "RRD", "SLA", "SLR", "SRA", "SRL"
-            size = 2
-            
-        ' New Interrupt mode
-        Case "IM"
-            size = 2
-            
-        ' New OR unification
-        Case "OR"
-            If usrIsRegister08Bit(op1) And (op2 = "(HL)" Or usrIsRegister08Bit(op2)) Then
-                size = 1 '8080 operations
-            ElseIf op2 = "BYTE" Then
-                size = 2 ' 8080 ORI
-            Else
-                size = 4 ' prefix + opcode + offset
+        Case "BIT", "SET", "RES", "SLA", "SRA", "SRL", "RLC", "RRC", "RL", "RR"
+            ' Z80 Indexed version: LD (IX+d), r (this is a 3-byte op in machine code)
+            If InStr(op1, "IX") > 0 Or InStr(op1, "IY") > 0 Or InStr(op2, "IX") > 0 Or InStr(op2, "IY") > 0 Then
+                HlpGetInstructionSize = 3: Exit Function
             End If
-        
-        ' -------------------------------
-        ' Enhanced Z80 versions of 8080 opcodes (needs operand inspection)
-        ' -------------------------------
-        Case "CPI"
-            '8080: CPI BYTE  Z80: CPI = ED A1
-            size = 2
-        Case "ADC", "ADD", "DEC", "INC", "SBC", "SUB", "XOR"
-            size = HlpSizeZ80Enhanced(mnem, op1, op2)
-        Case "CP"
-            ' 8080 CP (Call if Plus) operation
-            If op1 <> "A" And op2 = "" Then
-                size = 3
+        Case "EX"
+            ' Check if we are using an Index Register (IX or IY)
+            If InStr(op1 & op2, "IX") > 0 Or InStr(op1 & op2, "IY") > 0 Then
+                HlpGetInstructionSize = 2
             Else
-                size = HlpSizeZ80Enhanced(mnem, op1, op2)
+                HlpGetInstructionSize = 1
             End If
-        Case "JP"
-            If op1 = "(HL)" Then
-                size = 1
-            ElseIf op1 = "(IX)" Or op1 = "(IY)" Then
-                size = 2
-            Else
-                size = 3
-            End If
-        Case "POP", "PUSH"
-            If op1 = "IX" Or op1 = "IY" Then
-                size = 2 'prefix + opcode
-            Else
-                size = 1
-            End If
-        Case "RLC", "RRC"
-            '8080 Version
-            If op1 = "" Then
-                size = 1
-            Else
-                size = 2
-            End If
-                
-        ' -------------------------------
-        ' All others (register-register, implied)
-        ' -------------------------------
-        Case Else
-            size = 1
-
+            Exit Function
     End Select
 
-    HlpGetInstructionSize = size
+    ' --- 2-Byte Instructions (8-bit Immediates / Relative Jumps) ---
+    Select Case opcode
+        Case "MVI", "ADI", "ACI", "SUI", "SBI", "ANI", "XRI", "ORI", "CPI", "IN", "OUT", _
+             "JR", "JRNZ", "JRZ", "JRC", "JRNC", "DJNZ"
+            HlpGetInstructionSize = 2: Exit Function
+            
+        Case "LD"
+            ' LD A, 55H (8-bit immediate)
+            If Not Is16Bit(op1) And Not IsRegister(op2) And InStr(op2, "(") = 0 Then
+                HlpGetInstructionSize = 2: Exit Function
+            End If
+            
+        Case "BIT", "SET", "RES", "SLA", "SRA", "SRL", "RL", "RR"
+            ' Standard Z80 CB prefix instructions: BIT 7, A (2 bytes)
+            HlpGetInstructionSize = 2: Exit Function
+    End Select
 
+    ' --- 1-Byte Instructions (Default) ---
+    ' MOV, ADD, SUB, INR, DCR, PUSH, POP, RET, EX, EXX, NOP, "RLC", "RRC",  etc.
+    HlpGetInstructionSize = 1
 End Function
 ' --- Required Helpers ---
-Private Function HlpSizeZ80Enhanced(opcode As String, op1 As String, op2 As String) As Long
-    Dim size As Long: size = 0
-    Dim ixy As Boolean
-    ixy = Left(op1, 2) = "(I" Or Left(op1, 2) = "IX" Or Left(op1, 2) = "IY"
-    
-    'ADC a, (IX + offset)
-    If Left(op2, 2) = "(I" Then
-        size = 4 '3 + prefix
-        GoTo Finished
-    End If
-    If Left(op1, 2) = "(I" And (opcode = "DEC" Or opcode = "INC") Then
-        size = 4 '3 + prefix
-        GoTo Finished
-    End If
-    If usrIsRegister16Bit(op1) Or usrIsRegister16Bit(op2) Then
-        If (opcode = "ADD" Or opcode = "DEC" Or opcode = "INC") And Not ixy Then
-            size = 1 'use native 8080
-        Else
-            size = 2 '1 + prefix
-        End If
-        GoTo Finished
-    End If
-    'ADC A, BYTE
-    If op2 = "BYTE" Then
-        size = 2
-    'ADC B
-    Else
-        size = 1
-    End If
-Finished:
-    HlpSizeZ80Enhanced = size
-End Function
-
-Private Function HlpSizeLD(op1 As String, op2 As String) As Long
-
-    ' 16-bit with offset move of byte to IX or IY
-    If (op1 = "(IX+OFFSET)" Or op1 = "(IY+OFFSET)") And (op2 = "BYTE") Then
-        HlpSizeLD = 5 'prefix + opcode + offset + byte
-        Exit Function
-    End If
-    
-    ' Indexed addressing: (IX+d), (IY+d)
-    If InStr(op1, "(IX") > 0 Or InStr(op1, "(IY") > 0 _
-    Or InStr(op2, "(IX") > 0 Or InStr(op2, "(IY") > 0 Then
-        HlpSizeLD = 4   ' prefix + opcode + displacement
-        Exit Function
-    End If
-
-    ' 16-bit register swaps
-    If op1 = "SP" Then
-        'LD SP, HL- equivalent of 8080 SPHL
-        If op2 = "HL" Then
-            HlpSizeLD = 1
-            Exit Function
-        End If
-        If op2 = "IX" Or op2 = "IY" Then
-            HlpSizeLD = 2
-            Exit Function
-        End If
-    End If
-    
-    ' 16-bit store address to register
-    ' LD BC, WORD
-    ' LD BC, (WORD)
-    If (usrIsRegister16Bit(op1) Or op1 = "A") And (op2 = "WORD" Or op2 = "(WORD)") Then
-        Select Case op1
-            Case "IX", "IY"
-                HlpSizeLD = 4 ' prefix + opcode + WORD
-            Case "BC", "DE", "SP"
-                If op2 = "WORD" Then
-                    HlpSizeLD = 3 ' Map to 8080 operations
-                Else
-                    HlpSizeLD = 4 ' prefix + opcode + WORD
-                End If
-            Case Else
-                HlpSizeLD = 3 ' Map to 8080 operations
-            End Select
-        Exit Function
-    End If
-    
-    ' 16-bit register store to address
-    ' LD WORD, BC
-    ' LD WORD, A
-    If op1 = "WORD" And (op2 = "A" Or usrIsRegister16Bit(op2)) Then
-        If op2 = "HL" Then
-            HlpSizeLD = 3 ' 8080 SHLD operation equivalent
-        ElseIf op2 = "A" Then
-            HlpSizeLD = 3 ' 8080 STA operation equivalent
-        Else
-            HlpSizeLD = 4 ' prefix + opcode + WORD
-        End If
-        Exit Function
-    End If
-    
-    ' 16-bit store register to address
-    ' LD (WORD), BC
-    If op1 = "(WORD)" And usrIsRegister16Bit(op2) Then
-        HlpSizeLD = 4 ' prefix + opcode + WORD
-        Exit Function
-    End If
-    
-    ' 16-bit immediate to IX and IY
-    If (op1 = "IX" Or op1 = "IY") And (op2 = "WORD" Or usrValIsHexString(op2)) Then
-        HlpSizeLD = 4
-        Exit Function
-    End If
-    
-    ' 16-bit immediate
-    If op1 = "BC" Or op1 = "DE" Or op1 = "HL" _
-    Or op1 = "SP" Or op1 = "IX" Or op1 = "IY" Then
-        HlpSizeLD = 3
-        Exit Function
-    End If
-    
-    ' 8-bit register swaps
-    If usrIsRegister08Bit(op1) And usrIsRegister08Bit(op2) Then
-        HlpSizeLD = 1
-        Exit Function
-    End If
-
-    ' 16-bit 8080 LDA ADDR equivalent
-    If op1 = "A" And (op2 = "WORD" Or usrValIsHexString(op2)) Then
-        HlpSizeLD = 3
-        Exit Function
-    End If
-
-    ' 16 bit Register to Register Pair moves
-    ' LD (BC), A
-    If Left(op1, 1) = "(" And usrIsRegister08Bit(op2) Then
-        HlpSizeLD = 1
-        Exit Function
-    End If
-    
-    ' 8-bit register swaps to new Z80 registers I and R
-    If op1 = "I" Or op2 = "I" Or op1 = "R" Or op2 = "R" Then
-        HlpSizeLD = 2 ' prefix + op
-        Exit Function
-    End If
-    
-    ' 8-bit immediate
-    If op2 <> "" And Not InStr(op2, "(") > 0 _
-       And (op2 = "BYTE" Or usrValIsHexString(op2)) Then
-        HlpSizeLD = 2
-        Exit Function
-    End If
-    
-
-    ' Everything else
-    HlpSizeLD = 1
-
-End Function
-
-Public Function usrIsRegister08Bit(ByVal s As String) As Boolean
+Public Function IsRegister(ByVal s As String) As Boolean
     Select Case UCase(Trim(s))
-        Case "A", "B", "C", "D", "E", "H", "L", "M", "IX", "IY", "BC", "DE", "HL", "SP", "AF": usrIsRegister08Bit = True
-        Case Else: usrIsRegister08Bit = False
+        Case "A", "B", "C", "D", "E", "H", "L", "M", "IX", "IY", "BC", "DE", "HL", "SP", "AF": IsRegister = True
+        Case Else: IsRegister = False
     End Select
 End Function
 '------------------------------------------------------------------------------
@@ -7245,12 +6931,12 @@ Private Function HlpFindOpcode(ByVal opMap As Object, ByVal mnem As String, ByVa
     If opMap.Exists(key) Then HlpFindOpcode = opMap(key): Exit Function
 
     Dim p As Variant
-    For Each p In Array("BYTE", "WORD", "PORT")
+    For Each p In Array("BYTE", "ADDRESS", "PORT", "DATA")
         key = mnem & "|" & op1 & "|" & CStr(p)
         If opMap.Exists(key) Then HlpFindOpcode = opMap(key): Exit Function
     Next p
 
-    For Each p In Array("BYTE", "WORD", "PORT")
+    For Each p In Array("BYTE", "ADDRESS", "PORT", "DATA")
         key = mnem & "|" & CStr(p) & "|" & op2
         If opMap.Exists(key) Then HlpFindOpcode = opMap(key): Exit Function
         key = mnem & "|" & CStr(p) & "|"
@@ -7426,7 +7112,7 @@ Public Sub myTests()
     Set pNodes = New clsAddrList
     Dim i As Long
     Dim c As Long
-    c = pNodes.size
+    c = pNodes.Size
     Dim startAddr As Long
     startAddr = CLng(Range("line0").value)
     For i = startAddr To c + startAddr - 1
@@ -7434,12 +7120,6 @@ Public Sub myTests()
         Debug.Print i, pNodeRec.clsAddress, pNodeRec.clsAddressLast, pNodeRec.clsAddressNext
     Next i
 End Sub
-Public Function tstHlpGetInstructionSize(ByVal opcode As String, Optional ByVal op1 As String = "", Optional ByVal op2 As String = "") As Integer
-    Dim byteCount As Integer
-    Debug.Assert opcode = ""
-    byteCount = HlpGetInstructionSize(opcode, op1, op2)
-    tstHlpGetInstructionSize = byteCount
-End Function
 
 ''' Component: clsMemory
 Option Explicit
@@ -7622,8 +7302,8 @@ Public Function GetAddr(ByVal addr As Long) As clsAddrRecord
     End If
 End Function
 
-Public Function size() As Long
-    size = pNodes.Count
+Public Function Size() As Long
+    Size = pNodes.Count
 End Function
 
 
@@ -9877,7 +9557,7 @@ Public Function EncodeInstruction(ByRef lbls As clsLabels, _
         ' 16-bit address (little-endian: low byte, high byte)
         If spec1 = "ADDRESS" Then
             Dim addr As Long
-            addr = cmpResolveValue16(lbls, op1)
+            addr = ResolveValue16(lbls, op1)
             out(1) = addr And &HFF&
             out(2) = (addr \ 256) And &HFF&
         ElseIf spec1 = "BYTE" And spec2 = "BYTE" Then

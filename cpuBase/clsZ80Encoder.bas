@@ -24,6 +24,95 @@ Public Property Get OpcodeSheetName() As String
 End Property
 
 '==============================================================================
+' BuildOpcodeMap - Z80 Implementation
+' Reads Z80 opcode table and builds lookup dictionary
+' Uses the standard table format from "Z80 Op to Hex" sheet
+'==============================================================================
+Public Function BuildOpcodeMap(ByVal wsOp As Worksheet) As Object
+    Dim dict As Object: Set dict = CreateObject("Scripting.Dictionary")
+    dict.CompareMode = vbTextCompare
+    
+    Dim lastRow As Long
+    lastRow = wsOp.Cells(wsOp.Rows.Count, 1).End(xlUp).Row
+    
+    Dim r As Long, emptyRun As Long
+    emptyRun = 0
+    
+    ' Columns: A=Opcode, B=OP1, C=OP2, D=Hex, E=Bytes, F=Description, G=Category, H=Prefix, I=Base_Opcode
+    For r = 2 To lastRow
+        Dim mnem As String
+        mnem = UCase$(Trim$(CStr(wsOp.Cells(r, 1).value)))
+        If mnem = "" Then
+            emptyRun = emptyRun + 1
+            If emptyRun >= 10 Then Exit For
+            GoTo ContinueRow
+        Else
+            emptyRun = 0
+        End If
+        
+        Dim op1 As String: op1 = UCase$(Trim$(CStr(wsOp.Cells(r, 2).value)))
+        Dim op2 As String: op2 = UCase$(Trim$(CStr(wsOp.Cells(r, 3).value)))
+        Dim hexTxt As String: hexTxt = UCase$(Trim$(CStr(wsOp.Cells(r, 4).value)))
+        Dim bytes As Long: bytes = CLng(wsOp.Cells(r, 5).value)
+        Dim prefix As String: prefix = UCase$(Trim$(CStr(wsOp.Cells(r, 8).value)))
+        Dim baseOpcode As String: baseOpcode = UCase$(Trim$(CStr(wsOp.Cells(r, 9).value)))
+        
+        If hexTxt = "" Or bytes < 1 Then GoTo ContinueRow
+        
+        ' For Z80, we need to store the prefix and base opcode separately
+        Dim opByte As Long
+        opByte = usrHexToDec(baseOpcode) And &HFF&
+        
+        Dim key As String
+        key = mnem & "|" & op1 & "|" & op2
+        
+        If Not dict.Exists(key) Then
+            ' Store: Array(opByte, byteCount, op1_spec, op2_spec, prefix)
+            dict.ADD key, Array(opByte, bytes, op1, op2, prefix)
+        End If
+        
+ContinueRow:
+    Next r
+    
+    Set BuildOpcodeMap = dict
+End Function
+
+'==============================================================================
+' FindOpcode - Z80 Implementation
+' Looks up an instruction in the opcode map with fallback matching
+' Includes Z80-specific operand specs like OFFSET, BIT, REGISTER_INDEX
+'==============================================================================
+Public Function FindOpcode(ByVal opMap As Object, ByVal mnem As String, _
+                          ByVal op1 As String, ByVal op2 As String) As Variant
+    Dim key As String
+    
+    ' Try exact match
+    key = mnem & "|" & op1 & "|" & op2
+    If opMap.Exists(key) Then FindOpcode = opMap(key): Exit Function
+    
+    ' Try with only OP1
+    key = mnem & "|" & op1 & "|"
+    If opMap.Exists(key) Then FindOpcode = opMap(key): Exit Function
+    
+    ' Try with template specs (includes Z80-specific ones)
+    Dim p As Variant
+    For Each p In Array("BYTE", "ADDRESS", "PORT", "DATA", "OFFSET", "BIT", "REGISTER_INDEX")
+        key = mnem & "|" & op1 & "|" & CStr(p)
+        If opMap.Exists(key) Then FindOpcode = opMap(key): Exit Function
+    Next p
+    
+    For Each p In Array("BYTE", "ADDRESS", "PORT", "DATA", "OFFSET", "BIT", "REGISTER_INDEX")
+        key = mnem & "|" & CStr(p) & "|" & op2
+        If opMap.Exists(key) Then FindOpcode = opMap(key): Exit Function
+        key = mnem & "|" & CStr(p) & "|"
+        If opMap.Exists(key) Then FindOpcode = opMap(key): Exit Function
+    Next p
+    
+    ' No match found
+    FindOpcode = Empty
+End Function
+
+'==============================================================================
 ' EncodeInstruction - Z80 Specific Implementation
 ' Converts Z80 instruction mnemonic and operands to machine bytes
 ' Handles: Prefix opcodes (CB, ED, DD, FD), offsets, shadow registers

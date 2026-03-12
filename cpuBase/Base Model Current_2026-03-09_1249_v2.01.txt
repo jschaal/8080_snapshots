@@ -1,6 +1,6 @@
 === VBA EXPORT: Base Model Current.xlsm ===
-Timestamp: 3/12/2026 3:08:28 PM
-Version: 2.05
+Timestamp: 3/9/2026 12:49:17 PM
+Version: 2.01
 ================================================================================
 
 ''' Component: ThisWorkbook
@@ -1320,7 +1320,7 @@ Public Function RunOpcode(ByVal opcode As String, _
         Case "JMP":  result = Me.JMP(op1)                 ' 300xx
         Case "JNC":  result = Me.JNC(op1)
         Case "JNZ":  result = Me.JNZ(op1)
-        Case "JP":   result = Me.JP(op1, op2)              'redefined z80 operation
+        Case "JP":   result = Me.JP(op1)
         Case "JPE":  result = Me.JPE(op1)
         Case "JPO":  result = Me.JPO(op1)
         Case "JZ":   result = Me.JZ(op1)
@@ -1373,6 +1373,7 @@ Public Function RunOpcode(ByVal opcode As String, _
         Case "CNZ": result = Me.CCOND("NZ", op1)
         Case "CC":  result = Me.CCOND("C", op1)
         Case "CNC": result = Me.CCOND("NC", op1)
+        Case "CP":  result = Me.CCOND("P", op1)
         Case "CM":  result = Me.CCOND("M", op1)
         Case "CPE": result = Me.CCOND("PE", op1)
         Case "CPO": result = Me.CCOND("PO", op1)
@@ -1405,7 +1406,6 @@ Public Function RunOpcode(ByVal opcode As String, _
         
         ' --- Unified Z80 LD Logic ---
         Case "LD": result = LD(op1, op2)
-        Case "CP": result = Me.CP(op1, op2)
         
         ' --- Bit Operations ---
         Case "BIT": result = Me.BIT(op1, op2)
@@ -1840,44 +1840,9 @@ Public Function CMP(ByVal op1 As String) As Long
 End Function
 ' --- CMP ---
 
-' ==============================================================================
-' CP (Integrated CP Opcode)
-' Z80 redefined this opcode for clarity
-' 8080: Call if Plus: CP Word
-' Z80:  Compare Option with Register A:  CP A (option)
-'       Native Z80 Operation is CALL P WORD
-' Usage: CP data
-
-Public Function CP(ByVal op1 As String, op2 As String) As Long
-    Dim errorBase As Long: errorBase = 185
-    Dim result As Long
-    '8080 CP: execute conditional CP
-    If op2 = "" And op1 <> "A" Then
-        CP = Me.CCOND("P", op1)
-        Exit Function
-    End If
-    'Z80:  this is z80 compare and not 8080 call if plus
-    If op1 = "A" Then
-        'Standard register to A comparisons - resuse existing 8080 compare
-        If usrIsRegister08Bit(op2) Then
-            CP = Me.CMP(op2)
-            Exit Function
-        End If
-        'CP A, BYTE which is equivalent to CPI BYTE in 8080
-        If usrValIsHexString(op2) Then
-            CP = Me.CPI(op2)
-            Exit Function
-        End If
-        'still need to implement other z80 CP ops such as CP A,(HL) and CP A, (IX+OFFSET)
-    End If
-    SetError errorBase, "CP: Invalid Operation: " & op1 & " " & op2
-    CP = errorBase
-End Function
 
 ' ==============================================================================
-' Redefined in Z80
-' Z80: New Compare and increment Block Operation
-' 8080: CPI (Compare Immediate with A)
+' CPI (Compare Immediate with A)
 ' Usage: CPI data
 ' Opcode:   11111110 (next byte is immediate)
 ' 8080:     2 bytes, 7 cycles
@@ -1901,14 +1866,7 @@ End Function
 Public Function CPI(ByVal op1 As String) As Long
     Dim errorBase As Long: errorBase = 200
     Dim imm8 As Variant
-    
-    'Assume this is a Z80 CPI and not a 8080 CPI
-    If op1 = "" Then
-        CPI = CPI_Z80
-        Exit Function
-    End If
 
-    '8080 Version of CPI: CPI BYTE
     imm8 = HlpResolveImm08(op1, errorBase, "CPI")
     If IsEmpty(imm8) Then CPI = errorBase: Exit Function
 
@@ -1916,11 +1874,6 @@ Public Function CPI(ByVal op1 As String) As Long
     CPI = 0
 End Function
 ' --- CPI ---
-Public Function CPI_Z80() As Long
-    Dim errorBase As Long: errorBase = 205
-    SetError errorBase, "CPI: Z80 Invalid Operation"
-    CPI_Z80 = errorBase
-End Function
 
 ' ==============================================================================
 ' DAA (Decimal Adjust Accumulator)
@@ -2583,8 +2536,7 @@ End Function
 
 
 ' ==============================================================================
-' Z80 Redefined: JP (all jump conditions)
-' 808: JP (Jump if Plus)
+' JP (Jump if Plus)
 ' Usage: JP address
 ' Opcode:   11110010
 ' 8080:     3 bytes, 10 cycles (5 if no jump)
@@ -2602,50 +2554,14 @@ End Function
 '   220: Missing operand
 '   221: Invalid address
 ' ==============================================================================
-Public Function JP(ByVal op1 As String, Optional ByVal op2 As String = "") As Long
-    '8080 instruction for jump if plus
-    Dim condition As String: condition = "JP"
-    'Z80 instruction for general jump conditions based on op1
-    If op2 <> "" Then
-       
-        ' direct jump
-        If op1 = "" Then
-            JP = JMP(op2)
-            Exit Function
-        End If
-        
-        ' indrect jump from (HL)
-        If op1 = "(HL)" Or op1 = "(IX)" Or op1 = "(IY)" Then
-            JP = PCHL(op1)
-            Exit Function
-        End If
-        
-        If op1 = "C" Then condition = "JC"
-        If op1 = "M" Then condition = "JM"
-        If op1 = "NC" Then condition = "JNC"
-        If op1 = "NZ" Then condition = "JNZ"
-        If op1 = "P" Then condition = "JP"
-        If op1 = "PE" Then condition = "JPE"
-        If op1 = "PO" Then condition = "JPO"
-        If op1 = "Z" Then condition = "JZ"
-        op1 = op2
-    End If
-    
-    If HlpEvaluateCondition(condition) Then
+Public Function JP(ByVal op1 As String) As Long
+    If HlpEvaluateCondition("JP") Then
         JP = JMP(op1)
     Else
         JP = 0
     End If
 End Function
 ' --- JP ---
-Public Function JP_indirect(ByVal op1 As String) As Long
-    Dim errorBase As Long: errorBase = 305
-    If op1 = "(HL)" Then
-        JP_indirect = PCHL()
-    End If
-    
-
-End Function
 
 ' ==============================================================================
 ' JPE (Jump if Parity Even)
@@ -3168,7 +3084,6 @@ End Function
 ' ---  ORI ---
 
 ' ==============================================================================
-' Z80 Extension: indirect jump to HL, IX, IY
 ' PCHL (Jump to Address in HL)
 ' Usage: PCHL
 ' Opcode:   11101001
@@ -3188,17 +3103,11 @@ End Function
 '
 ' Error Codes: None
 ' ==============================================================================
-Public Function PCHL(Optional ByVal registerPair As String = "(HL)") As Long
+Public Function PCHL() As Long
     Dim hl As Long
     Dim addRec As clsAddrRecord
-    Select Case registerPair
-        Case "(HL)"
-            hl = ((pRegs("H") And 255) * 256&) + (pRegs("L") And 255)
-        Case "(IX)"
-            hl = pRegs("IX")
-        Case "(IY)"
-            hl = pRegs("IY")
-    End Select
+    hl = ((pRegs("H") And 255) * 256&) + (pRegs("L") And 255)
+    
     Set addRec = pAddressList.GetAddr(hl)
     SetPC addRec.clsAddressLast
     PCHL = 0
@@ -5114,7 +5023,7 @@ Public Sub SetReg16(ByVal regPair As String, ByVal value As Long)
         Case "SP": pRegs("SP") = val
         Case "PC": pRegs("PC") = val
     End Select
-    mUIRegsDirty = True
+    mUIFlagsDirty = True
 End Sub
 ' ==============================================================================
 ' Indexed Addressing: (IX+d) and (IY+d)
@@ -5163,7 +5072,7 @@ Private Function LD(ByVal op1 As String, ByVal op2 As String) As Long
             Exit Function
         End If
     ' 3. 16-Bit Register: LD HL, 1234H
-    ElseIf usrIsRegister16Bit(op1) Then
+    ElseIf Is16Bit(op1) Then
         SetReg16 op1, usrHexToDec(CStr(op2))
     ' 4. Standard 8-bit: LD A, B
     Else
@@ -5727,311 +5636,88 @@ Public Function HasUnitTest(instring As String) As Boolean
 End Function
 ' z80 additions
 ' Helper: Simple check to see if we are dealing with 16-bit register logic
-Public Function usrIsRegister16Bit(ByVal r As String) As Boolean
+Public Function Is16Bit(ByVal r As String) As Boolean
     Select Case UCase(Trim(r))
-        Case "BC", "DE", "HL", "IX", "IY", "SP", "AF", "BC'", "DE'", "HL'", "AF'": usrIsRegister16Bit = True
-        Case Else: usrIsRegister16Bit = False
+        Case "BC", "DE", "HL", "IX", "IY", "SP", "AF", "BC'", "DE'", "HL'", "AF'": Is16Bit = True
+        Case Else: Is16Bit = False
     End Select
 End Function
 
-Public Function HlpGetInstructionSize( _
-    ByVal mnem As String, _
-    Optional ByVal op1 As String = "", _
-    Optional ByVal op2 As String = "" _
-) As Long
+Public Function HlpGetInstructionSize(ByVal opcode As String, Optional ByVal op1 As String = "", Optional ByVal op2 As String = "") As Integer
+    opcode = UCase(Trim(opcode))
+    op1 = UCase(Trim(op1))
+    op2 = UCase(Trim(op2))
 
-    mnem = UCase$(Trim$(mnem))
-    op1 = UCase$(Trim$(op1))
-    op2 = UCase$(Trim$(op2))
+    ' --- 4-Byte Instructions (Z80 Indexed + Immediate) ---
+    ' Pattern: LD (IX+d), n
+    If opcode = "LD" And (InStr(op1, "IX") > 0 Or InStr(op1, "IY") > 0) And IsNumeric(Left(op2, 1)) Then
+        HlpGetInstructionSize = 4
+        Exit Function
+    End If
+    ' Pattern: BIT/SET/RES on Indexed (Z80)
+    If (opcode = "BIT" Or opcode = "SET" Or opcode = "RES") And (InStr(op2, "IX") > 0 Or InStr(op2, "IY") > 0) Then
+        HlpGetInstructionSize = 4
+        Exit Function
+    End If
 
-    ' Default: most instructions are 1 byte
-    Dim size As Long
-    size = 1
-
-    Select Case mnem
-
-        ' -------------------------------
-        ' Pseudo-ops / no code emitted
-        ' -------------------------------
-        Case "", "EQU"
-            size = 0
-
-        Case "DB"
-            size = Len(op1)   ' string payload already validated elsewhere
-
-        ' -------------------------------
-        ' 16-bit immediate
-        ' -------------------------------
-        Case "LXI", "JMP", "JC", "JNC", "JZ", "JNZ", _
-             "JM", "JPE", "JPO", "CALL", "LDA", "STA", _
-             "LHLD", "SHLD"
-            size = 3
-
-        ' -------------------------------
-        ' 16-bit Calls to Address (8080)
-        ' -------------------------------
-        Case "CC", "CM", "CNC", "CNZ", "CPE", "CPO", "CZ"
-            size = 3
-
-        ' -------------------------------
-        ' 8-bit immediate
-        ' -------------------------------
-        Case "MVI", "ADI", "ACI", "ANI", "ORI", "XRI", _
-             "CPI", "SUI", "SBI", "IN", "OUT", "PRI"
-            size = 2
-
-        ' -------------------------------
-        ' Relative jumps (Z80)
-        ' -------------------------------
-        Case "JR", "DJNZ"
-            size = 2
-
-        ' -------------------------------
-        ' BIT / SET / RES (Z80 CB-prefixed)
-        ' -------------------------------
-        Case "BIT", "SET", "RES"
-            size = 2
-
-        ' -------------------------------
-        ' LD family (needs operand inspection)
-        ' -------------------------------
+    ' --- 3-Byte Instructions (16-bit Immediates / Direct Addressing) ---
+    Select Case opcode
+        Case "JMP", "CALL", "JZ", "JNZ", "JC", "JNC", "JP", "JM", "JPE", "JPO", _
+             "CZ", "CNZ", "CC", "CNC", "CP", "CM", "CPE", "CPO", _
+             "STA", "LDA", "SHLD", "LHLD", "LXI"
+            HlpGetInstructionSize = 3: Exit Function
+            
         Case "LD"
-            size = HlpSizeLD(op1, op2)
-
-        ' -------------------------------
-        '  New Z80 operations
-        ' -------------------------------
-        Case "AND"
-            size = HlpSizeZ80Enhanced(mnem, op1, op2)
+            ' LXI BC, 1234H  or  LD BC, 1234H  or  LD IX, 1234H
+            If Is16Bit(op1) And Not IsRegister(op2) Then
+                HlpGetInstructionSize = 3: Exit Function
+            End If
+            ' LD A, (1234H)
+            If InStr(op2, "(") > 0 And Not (InStr(op2, "IX") > 0 Or InStr(op2, "IY") > 0 Or InStr(op2, "HL") > 0) Then
+                HlpGetInstructionSize = 3: Exit Function
+            End If
             
-        ' New Block Operations
-        Case "CPD", "CPDR", "CPIR", "IND", "INDR", "INI", "INIR", "LDD", "LDDR", "LDI", "LDIR", "OTDR", "OTIR", "OUTD", "OUTI"
-            size = 2
-        
-        ' New Z80 Shift and Negate Bit Operations
-        ' Prefix + opcdode
-        Case "NEG", "RETI", "RETN", "RL", "RLD", "RR", "RRD", "SLA", "SLR", "SRA", "SRL"
-            size = 2
-            
-        ' New Interrupt mode
-        Case "IM"
-            size = 2
-            
-        ' New OR unification
-        Case "OR"
-            If usrIsRegister08Bit(op1) And (op2 = "(HL)" Or usrIsRegister08Bit(op2)) Then
-                size = 1 '8080 operations
-            ElseIf op2 = "BYTE" Then
-                size = 2 ' 8080 ORI
-            Else
-                size = 4 ' prefix + opcode + offset
+        Case "BIT", "SET", "RES", "SLA", "SRA", "SRL", "RLC", "RRC", "RL", "RR"
+            ' Z80 Indexed version: LD (IX+d), r (this is a 3-byte op in machine code)
+            If InStr(op1, "IX") > 0 Or InStr(op1, "IY") > 0 Or InStr(op2, "IX") > 0 Or InStr(op2, "IY") > 0 Then
+                HlpGetInstructionSize = 3: Exit Function
             End If
-        
-        ' -------------------------------
-        ' Enhanced Z80 versions of 8080 opcodes (needs operand inspection)
-        ' -------------------------------
-        Case "CPI"
-            '8080: CPI BYTE  Z80: CPI = ED A1
-            size = 2
-        Case "ADC", "ADD", "DEC", "INC", "SBC", "SUB", "XOR"
-            size = HlpSizeZ80Enhanced(mnem, op1, op2)
-        Case "CP"
-            ' 8080 CP (Call if Plus) operation
-            If op1 <> "A" And op2 = "" Then
-                size = 3
+        Case "EX"
+            ' Check if we are using an Index Register (IX or IY)
+            If InStr(op1 & op2, "IX") > 0 Or InStr(op1 & op2, "IY") > 0 Then
+                HlpGetInstructionSize = 2
             Else
-                size = HlpSizeZ80Enhanced(mnem, op1, op2)
+                HlpGetInstructionSize = 1
             End If
-        Case "JP"
-            If op1 = "(HL)" Then
-                size = 1
-            ElseIf op1 = "(IX)" Or op1 = "(IY)" Then
-                size = 2
-            Else
-                size = 3
-            End If
-        Case "POP", "PUSH"
-            If op1 = "IX" Or op1 = "IY" Then
-                size = 2 'prefix + opcode
-            Else
-                size = 1
-            End If
-        Case "RLC", "RRC"
-            '8080 Version
-            If op1 = "" Then
-                size = 1
-            Else
-                size = 2
-            End If
-                
-        ' -------------------------------
-        ' All others (register-register, implied)
-        ' -------------------------------
-        Case Else
-            size = 1
-
+            Exit Function
     End Select
 
-    HlpGetInstructionSize = size
+    ' --- 2-Byte Instructions (8-bit Immediates / Relative Jumps) ---
+    Select Case opcode
+        Case "MVI", "ADI", "ACI", "SUI", "SBI", "ANI", "XRI", "ORI", "CPI", "IN", "OUT", _
+             "JR", "JRNZ", "JRZ", "JRC", "JRNC", "DJNZ"
+            HlpGetInstructionSize = 2: Exit Function
+            
+        Case "LD"
+            ' LD A, 55H (8-bit immediate)
+            If Not Is16Bit(op1) And Not IsRegister(op2) And InStr(op2, "(") = 0 Then
+                HlpGetInstructionSize = 2: Exit Function
+            End If
+            
+        Case "BIT", "SET", "RES", "SLA", "SRA", "SRL", "RL", "RR"
+            ' Standard Z80 CB prefix instructions: BIT 7, A (2 bytes)
+            HlpGetInstructionSize = 2: Exit Function
+    End Select
 
+    ' --- 1-Byte Instructions (Default) ---
+    ' MOV, ADD, SUB, INR, DCR, PUSH, POP, RET, EX, EXX, NOP, "RLC", "RRC",  etc.
+    HlpGetInstructionSize = 1
 End Function
 ' --- Required Helpers ---
-Private Function HlpSizeZ80Enhanced(opcode As String, op1 As String, op2 As String) As Long
-    Dim size As Long: size = 0
-    Dim ixy As Boolean
-    ixy = Left(op1, 2) = "(I" Or Left(op1, 2) = "IX" Or Left(op1, 2) = "IY"
-    
-    'ADC a, (IX + offset)
-    If Left(op2, 2) = "(I" Then
-        size = 4 '3 + prefix
-        GoTo Finished
-    End If
-    If Left(op1, 2) = "(I" And (opcode = "DEC" Or opcode = "INC") Then
-        size = 4 '3 + prefix
-        GoTo Finished
-    End If
-    If usrIsRegister16Bit(op1) Or usrIsRegister16Bit(op2) Then
-        If (opcode = "ADD" Or opcode = "DEC" Or opcode = "INC") And Not ixy Then
-            size = 1 'use native 8080
-        Else
-            size = 2 '1 + prefix
-        End If
-        GoTo Finished
-    End If
-    'ADC A, BYTE
-    If op2 = "BYTE" Then
-        size = 2
-    'ADC B
-    Else
-        size = 1
-    End If
-Finished:
-    HlpSizeZ80Enhanced = size
-End Function
-
-Private Function HlpSizeLD(op1 As String, op2 As String) As Long
-
-    ' 16-bit with offset move of byte to IX or IY
-    If (op1 = "(IX+OFFSET)" Or op1 = "(IY+OFFSET)") And (op2 = "BYTE") Then
-        HlpSizeLD = 5 'prefix + opcode + offset + byte
-        Exit Function
-    End If
-    
-    ' Indexed addressing: (IX+d), (IY+d)
-    If InStr(op1, "(IX") > 0 Or InStr(op1, "(IY") > 0 _
-    Or InStr(op2, "(IX") > 0 Or InStr(op2, "(IY") > 0 Then
-        HlpSizeLD = 4   ' prefix + opcode + displacement
-        Exit Function
-    End If
-
-    ' 16-bit register swaps
-    If op1 = "SP" Then
-        'LD SP, HL- equivalent of 8080 SPHL
-        If op2 = "HL" Then
-            HlpSizeLD = 1
-            Exit Function
-        End If
-        If op2 = "IX" Or op2 = "IY" Then
-            HlpSizeLD = 2
-            Exit Function
-        End If
-    End If
-    
-    ' 16-bit store address to register
-    ' LD BC, WORD
-    ' LD BC, (WORD)
-    If (usrIsRegister16Bit(op1) Or op1 = "A") And (op2 = "WORD" Or op2 = "(WORD)") Then
-        Select Case op1
-            Case "IX", "IY"
-                HlpSizeLD = 4 ' prefix + opcode + WORD
-            Case "BC", "DE", "SP"
-                If op2 = "WORD" Then
-                    HlpSizeLD = 3 ' Map to 8080 operations
-                Else
-                    HlpSizeLD = 4 ' prefix + opcode + WORD
-                End If
-            Case Else
-                HlpSizeLD = 3 ' Map to 8080 operations
-            End Select
-        Exit Function
-    End If
-    
-    ' 16-bit register store to address
-    ' LD WORD, BC
-    ' LD WORD, A
-    If op1 = "WORD" And (op2 = "A" Or usrIsRegister16Bit(op2)) Then
-        If op2 = "HL" Then
-            HlpSizeLD = 3 ' 8080 SHLD operation equivalent
-        ElseIf op2 = "A" Then
-            HlpSizeLD = 3 ' 8080 STA operation equivalent
-        Else
-            HlpSizeLD = 4 ' prefix + opcode + WORD
-        End If
-        Exit Function
-    End If
-    
-    ' 16-bit store register to address
-    ' LD (WORD), BC
-    If op1 = "(WORD)" And usrIsRegister16Bit(op2) Then
-        HlpSizeLD = 4 ' prefix + opcode + WORD
-        Exit Function
-    End If
-    
-    ' 16-bit immediate to IX and IY
-    If (op1 = "IX" Or op1 = "IY") And (op2 = "WORD" Or usrValIsHexString(op2)) Then
-        HlpSizeLD = 4
-        Exit Function
-    End If
-    
-    ' 16-bit immediate
-    If op1 = "BC" Or op1 = "DE" Or op1 = "HL" _
-    Or op1 = "SP" Or op1 = "IX" Or op1 = "IY" Then
-        HlpSizeLD = 3
-        Exit Function
-    End If
-    
-    ' 8-bit register swaps
-    If usrIsRegister08Bit(op1) And usrIsRegister08Bit(op2) Then
-        HlpSizeLD = 1
-        Exit Function
-    End If
-
-    ' 16-bit 8080 LDA ADDR equivalent
-    If op1 = "A" And (op2 = "WORD" Or usrValIsHexString(op2)) Then
-        HlpSizeLD = 3
-        Exit Function
-    End If
-
-    ' 16 bit Register to Register Pair moves
-    ' LD (BC), A
-    If Left(op1, 1) = "(" And usrIsRegister08Bit(op2) Then
-        HlpSizeLD = 1
-        Exit Function
-    End If
-    
-    ' 8-bit register swaps to new Z80 registers I and R
-    If op1 = "I" Or op2 = "I" Or op1 = "R" Or op2 = "R" Then
-        HlpSizeLD = 2 ' prefix + op
-        Exit Function
-    End If
-    
-    ' 8-bit immediate
-    If op2 <> "" And Not InStr(op2, "(") > 0 _
-       And (op2 = "BYTE" Or usrValIsHexString(op2)) Then
-        HlpSizeLD = 2
-        Exit Function
-    End If
-    
-
-    ' Everything else
-    HlpSizeLD = 1
-
-End Function
-
-Public Function usrIsRegister08Bit(ByVal s As String) As Boolean
+Public Function IsRegister(ByVal s As String) As Boolean
     Select Case UCase(Trim(s))
-        Case "A", "B", "C", "D", "E", "H", "L", "M", "IX", "IY", "BC", "DE", "HL", "SP", "AF": usrIsRegister08Bit = True
-        Case Else: usrIsRegister08Bit = False
+        Case "A", "B", "C", "D", "E", "H", "L", "M", "IX", "IY", "BC", "DE", "HL", "SP", "AF": IsRegister = True
+        Case Else: IsRegister = False
     End Select
 End Function
 '------------------------------------------------------------------------------
@@ -6112,49 +5798,6 @@ Public Function usrAsciiToHex(ByVal op1 As String) As String
     dec_char = Asc(Left(op1, 1))
     usrAsciiToHex = usrDecToHexString(dec_char)
 End Function
-
-' Compiler Common functions
-
-Public Function cmpResolveValue16(ByVal lbls As clsLabels, ByVal token As String) As Long
-    token = UCase$(Trim$(token))
-    If token = "" Then cmpResolveValue16 = 0: Exit Function
-
-    Dim rec As clsLabelRecord
-    Set rec = lbls.GetLabel(token)
-    If Not rec Is Nothing Then
-        cmpResolveValue16 = (rec.clsAddress And &HFFFF&)
-        Exit Function
-    End If
-
-    If usrValIsHexString(token) Then
-        cmpResolveValue16 = usrHexToDec(token) And &HFFFF&
-    ElseIf IsNumeric(token) Then
-        cmpResolveValue16 = CLng(token) And &HFFFF&
-    Else
-        cmpResolveValue16 = 0
-    End If
-End Function
-Public Sub cmpRaiseAsmError(ByVal wsCPU As Worksheet, ByVal msg As String, ByVal row As Range)
-    wsCPU.Range("Error").value = 1
-    wsCPU.Range("errMessage").value = "ASM ERROR: " & msg & " @ " & row.address(0, 0)
-End Sub
-' =============================================================================
-' DB string literal only (for now)
-' =============================================================================
-Public Function cmpStringToBytesVariant(ByVal s As String) As Variant
-    Dim out() As Variant, i As Long
-    If Len(s) = 0 Then
-        cmpStringToBytesVariant = Empty
-        Exit Function
-    End If
-    ReDim out(0 To Len(s))
-    For i = 1 To Len(s)
-        out(i - 1) = Asc(Mid$(s, i, 1)) And &HFF&
-    Next i
-    out(Len(s)) = 0
-    cmpStringToBytesVariant = out
-End Function
-
 
 '================================================================================
 ' Module:       modGlobals
@@ -6956,7 +6599,7 @@ End Sub
 ''' Component: Sheet3
 ''' [No code]
 
-''' Component: Compiler8080
+''' Component: Compiler
 Option Explicit
 
 ' --- Compile gating / caching ---
@@ -7072,10 +6715,10 @@ Public Sub Assemble8080_ToMachine()
 
             Case "ORG"
                 If op1 = "" Then
-                    cmpRaiseAsmError wsCPU, "ORG missing operand", cur
+                    RaiseAsmError wsCPU, "ORG missing operand", cur
                     Exit Sub
                 End If
-                pc = cmpResolveValue16(lbls, UCase$(op1))
+                pc = ResolveValue16(lbls, UCase$(op1))
                 GoTo NextRow
 
             Case "EQU"
@@ -7085,16 +6728,16 @@ Public Sub Assemble8080_ToMachine()
             Case "DB"
                 ' String literal only for now (raw OP1)
                 If Len(CStr(cur.offset(0, ofsOp1).value)) = 0 Then
-                    cmpRaiseAsmError wsCPU, "DB missing string", cur
+                    RaiseAsmError wsCPU, "DB missing string", cur
                     Exit Sub
                 End If
-                bytesOut = cmpStringToBytesVariant(CStr(cur.offset(0, ofsOp1).value))
+                bytesOut = StringToBytesVariant(CStr(cur.offset(0, ofsOp1).value))
 
             Case "DS"
                 Dim ds As Long
                 Dim i As Long
                 If Not usrValIsHexString(cur.offset(0, ofsOp1).value) Then
-                     cmpRaiseAsmError wsCPU, "DS Invalid DS Length", cur
+                     RaiseAsmError wsCPU, "DS Invalid DS Length", cur
                     Exit Sub
                 End If
                 ds = usrHexToDec(cur.offset(0, ofsOp1).value)
@@ -7110,7 +6753,7 @@ Public Sub Assemble8080_ToMachine()
                 Dim info As Variant
                 info = HlpFindOpcode(opMap, opcode, UCase$(op1), UCase$(op2))
                 If IsEmpty(info) Then
-                    cmpRaiseAsmError wsCPU, "Unknown instruction form: " & opcode & " " & op1 & " " & op2, cur
+                    RaiseAsmError wsCPU, "Unknown instruction form: " & opcode & " " & op1 & " " & op2, cur
                     Exit Sub
                 End If
 
@@ -7245,12 +6888,12 @@ Private Function HlpFindOpcode(ByVal opMap As Object, ByVal mnem As String, ByVa
     If opMap.Exists(key) Then HlpFindOpcode = opMap(key): Exit Function
 
     Dim p As Variant
-    For Each p In Array("BYTE", "WORD", "PORT")
+    For Each p In Array("BYTE", "ADDRESS", "PORT", "DATA")
         key = mnem & "|" & op1 & "|" & CStr(p)
         If opMap.Exists(key) Then HlpFindOpcode = opMap(key): Exit Function
     Next p
 
-    For Each p In Array("BYTE", "WORD", "PORT")
+    For Each p In Array("BYTE", "ADDRESS", "PORT", "DATA")
         key = mnem & "|" & CStr(p) & "|" & op2
         If opMap.Exists(key) Then HlpFindOpcode = opMap(key): Exit Function
         key = mnem & "|" & CStr(p) & "|"
@@ -7290,14 +6933,14 @@ Private Function HlpEncodeInstruction(ByVal lbls As clsLabels, ByVal opByte As B
             out(0) = opByte
 
             Dim imm16 As Long
-            imm16 = cmpResolveValue16(lbls, HlpPickImmediateToken(spec1, spec2, op1, op2))
+            imm16 = ResolveValue16(lbls, HlpPickImmediateToken(spec1, spec2, op1, op2))
 
             ' 8080 immediates are little-endian: low byte then high byte
             out(1) = CByte(imm16 And &HFF&)
             out(2) = CByte((imm16 \ 256) And &HFF&)
 
         Case Else
-            cmpRaiseAsmError wsCPU, "Unsupported instruction length: " & nBytes & " for " & opname, curRow
+            RaiseAsmError wsCPU, "Unsupported instruction length: " & nBytes & " for " & opname, curRow
             HlpEncodeInstruction = Empty
             Exit Function
     End Select
@@ -7327,7 +6970,7 @@ Private Function ResolveValue8(ByVal lbls As clsLabels, ByVal token As String, _
                                ByVal opname As String, ByVal wsCPU As Worksheet, ByVal curRow As Range) As Long
     token = UCase$(Trim$(token))
     If token = "" Then
-        cmpRaiseAsmError wsCPU, opname & " missing 8-bit immediate", curRow
+        RaiseAsmError wsCPU, opname & " missing 8-bit immediate", curRow
         ResolveValue8 = 0
         Exit Function
     End If
@@ -7344,9 +6987,46 @@ Private Function ResolveValue8(ByVal lbls As clsLabels, ByVal token As String, _
     ElseIf IsNumeric(token) Then
         ResolveValue8 = CLng(token) And &HFF&
     Else
-        cmpRaiseAsmError wsCPU, opname & " invalid imm8: " & token, curRow
+        RaiseAsmError wsCPU, opname & " invalid imm8: " & token, curRow
         ResolveValue8 = 0
     End If
+End Function
+
+Private Function ResolveValue16(ByVal lbls As clsLabels, ByVal token As String) As Long
+    token = UCase$(Trim$(token))
+    If token = "" Then ResolveValue16 = 0: Exit Function
+
+    Dim rec As clsLabelRecord
+    Set rec = lbls.GetLabel(token)
+    If Not rec Is Nothing Then
+        ResolveValue16 = (rec.clsAddress And &HFFFF&)
+        Exit Function
+    End If
+
+    If usrValIsHexString(token) Then
+        ResolveValue16 = usrHexToDec(token) And &HFFFF&
+    ElseIf IsNumeric(token) Then
+        ResolveValue16 = CLng(token) And &HFFFF&
+    Else
+        ResolveValue16 = 0
+    End If
+End Function
+
+' =============================================================================
+' DB string literal only (for now)
+' =============================================================================
+Private Function StringToBytesVariant(ByVal s As String) As Variant
+    Dim out() As Variant, i As Long
+    If Len(s) = 0 Then
+        StringToBytesVariant = Empty
+        Exit Function
+    End If
+    ReDim out(0 To Len(s))
+    For i = 1 To Len(s)
+        out(i - 1) = Asc(Mid$(s, i, 1)) And &HFF&
+    Next i
+    out(Len(s)) = 0
+    StringToBytesVariant = out
 End Function
 
 Private Function BytesToHexString(ByVal bytesOut As Variant) As String
@@ -7361,13 +7041,16 @@ End Function
 ' =============================================================================
 ' Helpers / safety wrappers
 ' =============================================================================
-Public Function StripComment(ByVal s As String) As String
+Private Function StripComment(ByVal s As String) As String
     Dim p As Long
     p = InStr(1, s, ";", vbBinaryCompare)
     If p > 0 Then StripComment = Trim$(Left$(s, p - 1)) Else StripComment = Trim$(s)
 End Function
 
-
+Private Sub RaiseAsmError(ByVal wsCPU As Worksheet, ByVal msg As String, ByVal row As Range)
+    wsCPU.Range("Error").value = 1
+    wsCPU.Range("errMessage").value = "ASM ERROR: " & msg & " @ " & row.address(0, 0)
+End Sub
 
 Public Sub Compile_SetEnabled(ByVal enabled As Boolean)
     gCompileEnabled = enabled
@@ -7426,7 +7109,7 @@ Public Sub myTests()
     Set pNodes = New clsAddrList
     Dim i As Long
     Dim c As Long
-    c = pNodes.size
+    c = pNodes.Size
     Dim startAddr As Long
     startAddr = CLng(Range("line0").value)
     For i = startAddr To c + startAddr - 1
@@ -7434,12 +7117,6 @@ Public Sub myTests()
         Debug.Print i, pNodeRec.clsAddress, pNodeRec.clsAddressLast, pNodeRec.clsAddressNext
     Next i
 End Sub
-Public Function tstHlpGetInstructionSize(ByVal opcode As String, Optional ByVal op1 As String = "", Optional ByVal op2 As String = "") As Integer
-    Dim byteCount As Integer
-    Debug.Assert opcode = ""
-    byteCount = HlpGetInstructionSize(opcode, op1, op2)
-    tstHlpGetInstructionSize = byteCount
-End Function
 
 ''' Component: clsMemory
 Option Explicit
@@ -7622,8 +7299,8 @@ Public Function GetAddr(ByVal addr As Long) As clsAddrRecord
     End If
 End Function
 
-Public Function size() As Long
-    size = pNodes.Count
+Public Function Size() As Long
+    Size = pNodes.Count
 End Function
 
 
@@ -9023,985 +8700,3 @@ End Sub
 
 ''' Component: Sheet8
 ''' [No code]
-
-''' Component: Sheet10
-''' [No code]
-
-''' Component: cls8080Encoder
-'==============================================================================
-' Class: cls8080Encoder
-' Purpose: Concrete implementation of CPUEncoder for Intel 8080 processor
-' Inherits from clsCPUEncoder and implements 8080-specific instruction encoding
-'==============================================================================
-
-Option Explicit
-
-'==============================================================================
-' CPUName Property
-' Returns the name of this CPU
-'==============================================================================
-Public Property Get CPUName() As String
-    CPUName = "8080"
-End Property
-
-'==============================================================================
-' OpcodeSheetName Property
-' Returns the worksheet name containing 8080 opcode mappings
-'==============================================================================
-Public Property Get OpcodeSheetName() As String
-    OpcodeSheetName = "8080 Op to Hex"
-End Property
-
-'==============================================================================
-' BuildOpcodeMap - 8080 Implementation
-' Reads 8080 opcode table and builds lookup dictionary
-' Uses the standard table format from "8080 Op to Hex" sheet
-'==============================================================================
-Public Function BuildOpcodeMap(ByVal wsOp As Worksheet) As Object
-    ' Call the base class implementation which works for standard 8080 format
-    Dim dict As Object: Set dict = CreateObject("Scripting.Dictionary")
-    dict.CompareMode = vbTextCompare
-    
-    Dim lastRow As Long
-    lastRow = wsOp.Cells(wsOp.Rows.Count, 1).End(xlUp).row
-    
-    Dim r As Long, emptyRun As Long
-    emptyRun = 0
-    
-    ' Columns: A=Opcode, B=Hex, D=OP1, E=OP2, F=Bytes
-    For r = 2 To lastRow
-        Dim mnem As String
-        mnem = UCase$(Trim$(CStr(wsOp.Cells(r, 1).value)))
-        If mnem = "" Then
-            emptyRun = emptyRun + 1
-            If emptyRun >= 10 Then Exit For
-            GoTo ContinueRow
-        Else
-            emptyRun = 0
-        End If
-        
-        Dim hexTxt As String: hexTxt = UCase$(Trim$(CStr(wsOp.Cells(r, 2).value)))
-        Dim spec1 As String: spec1 = UCase$(Trim$(CStr(wsOp.Cells(r, 4).value)))
-        Dim spec2 As String: spec2 = UCase$(Trim$(CStr(wsOp.Cells(r, 5).value)))
-        Dim bytes As Long: bytes = CLng(wsOp.Cells(r, 6).value)
-        
-        If hexTxt = "" Or bytes < 1 Then GoTo ContinueRow
-        
-        Dim opByte As Long
-        opByte = usrHexToDec(hexTxt) And &HFF&
-        
-        Dim key As String
-        key = mnem & "|" & spec1 & "|" & spec2
-        
-        If Not dict.Exists(key) Then
-            dict.ADD key, Array(opByte, bytes, spec1, spec2)
-        End If
-        
-ContinueRow:
-    Next r
-    
-    Set BuildOpcodeMap = dict
-End Function
-
-'==============================================================================
-' FindOpcode - 8080 Implementation
-' Looks up an instruction in the opcode map with fallback matching
-'==============================================================================
-Public Function FindOpcode(ByVal opMap As Object, ByVal mnem As String, _
-                          ByVal op1 As String, ByVal op2 As String) As Variant
-    Dim key As String
-    
-    ' Try exact match
-    key = mnem & "|" & op1 & "|" & op2
-    If opMap.Exists(key) Then FindOpcode = opMap(key): Exit Function
-    
-    ' Try with only OP1
-    key = mnem & "|" & op1 & "|"
-    If opMap.Exists(key) Then FindOpcode = opMap(key): Exit Function
-    
-    ' Try with template specs
-    Dim p As Variant
-    For Each p In Array("BYTE", "ADDRESS", "PORT", "DATA")
-        key = mnem & "|" & op1 & "|" & CStr(p)
-        If opMap.Exists(key) Then FindOpcode = opMap(key): Exit Function
-    Next p
-    
-    For Each p In Array("BYTE", "ADDRESS", "PORT", "DATA")
-        key = mnem & "|" & CStr(p) & "|" & op2
-        If opMap.Exists(key) Then FindOpcode = opMap(key): Exit Function
-        key = mnem & "|" & CStr(p) & "|"
-        If opMap.Exists(key) Then FindOpcode = opMap(key): Exit Function
-    Next p
-    
-    ' No match found
-    FindOpcode = Empty
-End Function
-
-'==============================================================================
-' EncodeInstruction - 8080 Specific Implementation
-' Converts 8080 instruction mnemonic and operands to machine bytes
-'
-' Returns a Variant array of bytes, or Empty if encoding failed
-'==============================================================================
-Public Function EncodeInstruction(ByRef lbls As clsLabels, _
-                                 ByVal opByte As Long, ByVal byteCount As Long, _
-                                 ByVal spec1 As String, ByVal spec2 As String, _
-                                 ByVal op1 As String, ByVal op2 As String, _
-                                 ByVal mnem As String, ByVal cur As Range, _
-                                 ByVal wsCPU As Worksheet) As Variant
-
-    Dim out() As Byte
-    ReDim out(0 To byteCount - 1)
-    
-    ' First byte is always the opcode
-    out(0) = opByte And &HFF&
-    
-    ' Handle operands based on specification
-    If byteCount = 1 Then
-        ' Single-byte instruction, no operands
-        EncodeInstruction = out
-        Exit Function
-    End If
-    
-    ' 2-byte or 3-byte instruction with operands
-    If byteCount = 2 Then
-        ' 8-bit immediate or register-based
-        If spec1 = "BYTE" Or spec1 = "DATA" Then
-            out(1) = usrHexToDec(op1) And &HFF&
-        End If
-        EncodeInstruction = out
-        Exit Function
-    End If
-    
-    If byteCount = 3 Then
-        ' 16-bit address (little-endian: low byte, high byte)
-        If spec1 = "ADDRESS" Then
-            Dim addr As Long
-            addr = cmpResolveValue16(lbls, op1)
-            out(1) = addr And &HFF&
-            out(2) = (addr \ 256) And &HFF&
-        ElseIf spec1 = "BYTE" And spec2 = "BYTE" Then
-            ' Two 8-bit values (rare in 8080)
-            out(1) = usrHexToDec(op1) And &HFF&
-            out(2) = usrHexToDec(op2) And &HFF&
-        End If
-        EncodeInstruction = out
-        Exit Function
-    End If
-    
-    ' Fallback
-    EncodeInstruction = out
-
-End Function
-
-'==============================================================================
-' ValidateOperand - 8080 Specific Validation
-'==============================================================================
-Public Function ValidateOperand(ByVal spec As String, ByVal value As String) As Boolean
-    
-    Select Case spec
-        Case "BYTE"
-            ' 8-bit value (0-255)
-            Dim byteVal As Long
-            byteVal = usrHexToDec(value)
-            ValidateOperand = (byteVal >= 0 And byteVal <= 255)
-            
-        Case "ADDRESS"
-            ' 16-bit address (0-65535)
-            Dim addr As Long
-            addr = usrHexToDec(value)
-            ValidateOperand = (addr >= 0 And addr <= 65535)
-            
-        Case "PORT"
-            ' Port number (0-255)
-            Dim port As Long
-            port = usrHexToDec(value)
-            ValidateOperand = (port >= 0 And port <= 255)
-            
-        Case Else
-            ' Default: assume valid
-            ValidateOperand = True
-    End Select
-    
-End Function
-
-
-
-
-''' Component: clsCPUEncoder
-'==============================================================================
-' Class: clsCPUEncoder
-' Purpose: Abstract base class for CPU instruction encoders
-' Allows for extensible architecture supporting multiple CPUs (8080, Z80, 6502, etc)
-'==============================================================================
-
-Option Explicit
-
-' Properties that subclasses must implement
-Public Property Get CPUName() As String
-    ' Override in subclass: "8080", "Z80", "6502", etc
-    Err.Raise 11 ' NotImplemented
-End Property
-
-Public Property Get OpcodeSheetName() As String
-    ' Override in subclass: sheet name containing opcode mappings
-    Err.Raise 11
-End Property
-
-'==============================================================================
-' BuildOpcodeMap
-' Reads opcode table from the appropriate CPU sheet and builds lookup dictionary
-' Must be overridden by subclasses if they have different table structures
-'==============================================================================
-Public Function BuildOpcodeMap(ByVal wsOp As Worksheet) As Object
-    ' Default implementation - override if your CPU has different table format
-    Dim dict As Object: Set dict = CreateObject("Scripting.Dictionary")
-    dict.CompareMode = vbTextCompare
-    
-    Dim lastRow As Long
-    lastRow = wsOp.Cells(wsOp.Rows.Count, 1).End(xlUp).row
-    
-    Dim r As Long, emptyRun As Long
-    emptyRun = 0
-    
-    ' Columns: A=Opcode, B=Hex, D=OP1, E=OP2, F=Bytes
-    For r = 2 To lastRow
-        Dim mnem As String
-        mnem = UCase$(Trim$(CStr(wsOp.Cells(r, 1).value)))
-        If mnem = "" Then
-            emptyRun = emptyRun + 1
-            If emptyRun >= 10 Then Exit For
-            GoTo ContinueRow
-        Else
-            emptyRun = 0
-        End If
-        
-        Dim hexTxt As String: hexTxt = UCase$(Trim$(CStr(wsOp.Cells(r, 2).value)))
-        Dim spec1 As String: spec1 = UCase$(Trim$(CStr(wsOp.Cells(r, 4).value)))
-        Dim spec2 As String: spec2 = UCase$(Trim$(CStr(wsOp.Cells(r, 5).value)))
-        Dim bytes As Long: bytes = CLng(wsOp.Cells(r, 6).value)
-        
-        If hexTxt = "" Or bytes < 1 Then GoTo ContinueRow
-        
-        Dim opByte As Long
-        opByte = usrHexToDec(hexTxt) And &HFF&
-        
-        Dim key As String
-        key = mnem & "|" & spec1 & "|" & spec2
-        
-        If Not dict.Exists(key) Then
-            dict.ADD key, Array(opByte, bytes, spec1, spec2)
-        End If
-        
-ContinueRow:
-    Next r
-    
-    Set BuildOpcodeMap = dict
-End Function
-
-'==============================================================================
-' FindOpcode
-' Looks up an instruction in the opcode map with fallback matching
-' Can be overridden by subclasses for specialized lookup logic
-'==============================================================================
-Public Function FindOpcode(ByVal opMap As Object, ByVal mnem As String, _
-                          ByVal op1 As String, ByVal op2 As String) As Variant
-    Dim key As String
-    
-    ' Try exact match
-    key = mnem & "|" & op1 & "|" & op2
-    If opMap.Exists(key) Then FindOpcode = opMap(key): Exit Function
-    
-    ' Try with only OP1
-    key = mnem & "|" & op1 & "|"
-    If opMap.Exists(key) Then FindOpcode = opMap(key): Exit Function
-    
-    ' Try with template specs
-    Dim p As Variant
-    For Each p In Array("BYTE", "ADDRESS", "PORT", "DATA", "OFFSET")
-        key = mnem & "|" & op1 & "|" & CStr(p)
-        If opMap.Exists(key) Then FindOpcode = opMap(key): Exit Function
-    Next p
-    
-    For Each p In Array("BYTE", "ADDRESS", "PORT", "DATA", "OFFSET")
-        key = mnem & "|" & CStr(p) & "|" & op2
-        If opMap.Exists(key) Then FindOpcode = opMap(key): Exit Function
-        key = mnem & "|" & CStr(p) & "|"
-        If opMap.Exists(key) Then FindOpcode = opMap(key): Exit Function
-    Next p
-    
-    ' No match found
-    FindOpcode = Empty
-End Function
-
-'==============================================================================
-' EncodeInstruction
-' Converts an instruction mnemonic and operands to machine bytes
-' MUST be overridden by subclasses
-'==============================================================================
-Public Function EncodeInstruction(ByRef lbls As Object, _
-                                 ByVal opByte As Long, ByVal byteCount As Long, _
-                                 ByVal spec1 As String, ByVal spec2 As String, _
-                                 ByVal op1 As String, ByVal op2 As String, _
-                                 ByVal mnem As String, ByVal cur As Range, _
-                                 ByVal wsCPU As Worksheet) As Variant
-    ' Must be overridden in subclass
-    Err.Raise 11 ' NotImplemented
-End Function
-
-'==============================================================================
-' ValidateOperand
-' Validates an operand value is within acceptable range for this CPU
-' Can be overridden by subclasses for CPU-specific validation
-'==============================================================================
-Public Function ValidateOperand(ByVal spec As String, ByVal value As String) As Boolean
-    ' Default: assume value is valid
-    ' Override for specific validation rules
-    ValidateOperand = True
-End Function
-
-
-
-
-''' Component: CompilerAdvanced
-
-'==============================================================================
-' Module: CompilerAdvanced (Updated for Class-Based Architecture)
-' Purpose: Assemble CPU code to machine bytes using extensible encoder classes
-' Supports: 8080, Z80 (and easily extensible to 6502, etc)
-'==============================================================================
-
-Option Explicit
-
-Private Const BYTES_PER_MEMROW As Long = 8
-Private Const EMPTY_RUN_LIMIT As Long = 8
-Private gMemTableCol As Long
-Private pLabels As New clsLabels
-
-'==============================================================================
-' AssembleToMachine - Main Entry Point
-' Detects CPU type and uses appropriate encoder
-'==============================================================================
-Public Sub AssembleToMachine()
-    
-    Dim wsCPU As Worksheet
-    Set wsCPU = ThisWorkbook.Worksheets("CPU")
-    
-    ' Detect CPU type - you can customize this detection
-    Dim cpuType As String
-    cpuType = GetSelectedCPU()
-    
-    ' Create appropriate encoder
-    Dim encoder As Object
-    Select Case cpuType
-        Case "8080"
-            Set encoder = New cls8080Encoder
-        Case "Z80"
-            Set encoder = New clsZ80Encoder
-        Case Else
-            MsgBox "Unknown CPU type: " & cpuType, vbExclamation
-            Exit Sub
-    End Select
-    
-    ' Run compilation with the encoder
-    CompileWithEncoder wsCPU, encoder
-
-End Sub
-
-'==============================================================================
-' GetSelectedCPU
-' Returns the CPU type to use
-' Customize this to read from your UI or named range
-'==============================================================================
-Private Function GetSelectedCPU() As String
-    
-    ' Option 1: Read from a named range
-    ' Set up a named range "SelectedCPU" with value "8080" or "Z80"
-    On Error Resume Next
-    GetSelectedCPU = CStr(Range("SelectedCPU").value)
-    On Error GoTo 0
-    
-    ' Option 2: Default to 8080 if not found
-    If GetSelectedCPU = "" Then
-        GetSelectedCPU = "8080"
-    End If
-    
-End Function
-
-'==============================================================================
-' CompileWithEncoder
-' Core compilation logic using an encoder instance
-'==============================================================================
-Private Sub CompileWithEncoder(ByVal wsCPU As Worksheet, ByVal encoder As Object)
-    
-    Dim wsOp As Worksheet
-    ' Get opcode sheet from encoder
-    Set wsOp = ThisWorkbook.Worksheets(encoder.OpcodeSheetName)
-    
-    Dim myMemory As clsMemory
-    Dim lbl As clsLabelRecord
-    
-    usrMemReset
-    ResetAddressList
-    Set myMemory = gMemory
-    
-    ' Offsets into the CPU program grid
-    Dim ofsLabel As Long, ofsOpcode As Long, ofsOp1 As Long, ofsOp2 As Long
-    ofsLabel = CLng(wsCPU.Range("ofs_label").value)
-    ofsOpcode = CLng(wsCPU.Range("ofs_opcode").value)
-    ofsOp1 = CLng(wsCPU.Range("ofs_op1").value)
-    ofsOp2 = CLng(wsCPU.Range("ofs_op2").value)
-    gMemTableCol = CLng(wsCPU.Range("MemoryTableAddress").Column)
-    
-    ' Memory window
-    Dim memStartDec As Long, memSize As Long
-    memStartDec = usrHexToDec(CStr(wsCPU.Range("MemStart").value))
-    memSize = usrHexToDec(CStr(wsCPU.Range("MemSize").value))
-    
-    ' Build opcode lookup dictionary using encoder
-    Dim opMap As Object
-    Set opMap = encoder.BuildOpcodeMap(wsOp)
-    
-    ' Labels/EQU/DB metadata
-    Dim lbls As clsLabels
-    Set lbls = New clsLabels
-    
-    ' MemoryTable byte cells
-    Dim rngMem As Range
-    Set rngMem = wsCPU.Range("MemoryTable")
-    
-    Application.Calculate
-    Application.ScreenUpdating = False
-    
-    ' Clear prior compiled bytes
-    rngMem.ClearContents
-    wsCPU.Range(wsCPU.Cells(rngMem.row, gMemTableCol), _
-                wsCPU.Cells(rngMem.row + rngMem.Rows.Count - 1, gMemTableCol)).ClearContents
-    
-    Dim base As Range
-    Set base = wsCPU.Range("Line0")
-    
-    Dim pc As Long
-    pc = memStartDec
-    
-    Dim r As Long, emptyRun As Long
-    emptyRun = 0
-    
-    ' Walk listing rows
-    For r = 0 To memSize
-        
-        Dim cur As Range
-        Set cur = base.offset(r, 0)
-        
-        Dim labelName As String, opcode As String, op1 As String, op2 As String
-        labelName = UCase$(Trim$(CStr(cur.offset(0, ofsLabel).value)))
-        opcode = UCase$(Trim$(CStr(cur.offset(0, ofsOpcode).value)))
-        op1 = StripComment(Trim$(CStr(cur.offset(0, ofsOp1).value)))
-        op2 = StripComment(Trim$(CStr(cur.offset(0, ofsOp2).value)))
-        
-        ' Stop condition: skip lines starting with ;
-        If (labelName = ";") Then
-            GoTo NextRow
-        End If
-        
-        ' Stop condition: consecutive empty rows
-        If (labelName = "") And (opcode = "") And (op1 = "") And (op2 = "") Then
-            emptyRun = emptyRun + 1
-            If emptyRun >= EMPTY_RUN_LIMIT Then Exit For
-            GoTo NextRow
-        Else
-            emptyRun = 0
-        End If
-        
-        ' Resolve labels
-        Set lbl = pLabels.GetLabel(op1)
-        If Not lbl Is Nothing Then
-            op1 = lbl.clsAddressHex
-        End If
-        
-        Dim bytesOut As Variant
-        bytesOut = Empty
-        
-        Select Case opcode
-            Case ""
-                GoTo NextRow
-                
-            Case "ORG"
-                If op1 = "" Then
-                    cmpRaiseAsmError wsCPU, "ORG missing operand", cur
-                    Exit Sub
-                End If
-                pc = cmpResolveValue16(lbls, UCase$(op1))
-                GoTo NextRow
-                
-            Case "EQU"
-                GoTo NextRow
-                
-            Case "DB"
-                If Len(CStr(cur.offset(0, ofsOp1).value)) = 0 Then
-                    cmpRaiseAsmError wsCPU, "DB missing string", cur
-                    Exit Sub
-                End If
-                bytesOut = cmpStringToBytesVariant(CStr(cur.offset(0, ofsOp1).value))
-                
-            Case "DS"
-                Dim ds As Long, i As Long
-                If Not usrValIsHexString(cur.offset(0, ofsOp1).value) Then
-                    cmpRaiseAsmError wsCPU, "DS Invalid length", cur
-                    Exit Sub
-                End If
-                ds = usrHexToDec(cur.offset(0, ofsOp1).value)
-                Dim out() As Variant
-                ReDim out(0 To ds - 1)
-                For i = 1 To ds
-                    out(i - 1) = 255
-                Next i
-                bytesOut = out
-                
-            Case Else
-                ' Use encoder to look up and encode instruction
-                Dim info As Variant
-                info = encoder.FindOpcode(opMap, opcode, UCase$(op1), UCase$(op2))
-                If IsEmpty(info) Then
-                    cmpRaiseAsmError wsCPU, "Unknown instruction: " & opcode & " " & op1 & " " & op2, cur
-                    Exit Sub
-                End If
-                
-                bytesOut = encoder.EncodeInstruction(lbls, CByte(info(0)), CLng(info(1)), _
-                                                    CStr(info(2)), CStr(info(3)), _
-                                                    UCase$(op1), UCase$(op2), opcode, cur, wsCPU)
-        End Select
-        
-        ' Emit compiled bytes to MemoryTable
-        If Not IsEmpty(bytesOut) Then
-            EmitBytesToMemoryTable wsCPU, rngMem, memStartDec, pc, bytesOut, myMemory
-            pc = pc + (UBound(bytesOut) - LBound(bytesOut) + 1)
-        End If
-        
-NextRow:
-    Next r
-    
-    Application.ScreenUpdating = True
-    wsCPU.Range("errMessage").value = "Assemble complete (" & encoder.CPUName & ")"
-
-End Sub
-
-'==============================================================================
-' EmitBytesToMemoryTable
-' Writes compiled bytes to MemoryTable based on PC
-'==============================================================================
-Private Sub EmitBytesToMemoryTable(ByVal wsCPU As Worksheet, _
- ByVal rngMem As Range, _
- ByVal memStartDec As Long, _
- ByVal startAddrDec As Long, _
- ByVal bytesOut As Variant, _
- ByRef myMem As clsMemory)
-    
-    Dim i As Long, baseAddr As Long, lastTargetRow As Long
-    lastTargetRow = 0
-    baseAddr = memStartDec
-    
-    For i = LBound(bytesOut) To UBound(bytesOut)
-        
-        Dim addr As Long, offset As Long, rowIndex As Long, colIndex As Long
-        Dim targetRow As Long, targetCol As Long
-        
-        addr = startAddrDec + (i - LBound(bytesOut))
-        offset = addr - memStartDec
-        If offset < 0 Then Exit Sub
-        
-        rowIndex = offset \ BYTES_PER_MEMROW
-        colIndex = offset Mod BYTES_PER_MEMROW
-        
-        targetRow = 1 + rowIndex
-        targetCol = 1 + colIndex
-        
-        If targetRow > rngMem.Rows.Count Then Exit Sub
-        If targetCol > rngMem.Columns.Count Then Exit Sub
-        
-        rngMem.Cells(targetRow, targetCol).value = Right$("00" & hex$(CLng(bytesOut(i)) And &HFF&), 2)
-        myMem.addr(addr) = CLng(bytesOut(i)) And &HFF&
-        
-        baseAddr = memStartDec + (rowIndex * BYTES_PER_MEMROW)
-        lastTargetRow = targetRow
-    Next i
-    
-    If lastTargetRow > 0 Then
-        wsCPU.Cells(rngMem.row + (lastTargetRow - 1), gMemTableCol).value = baseAddr
-    End If
-
-End Sub
-
-
-
-
-''' Component: clsZ80Encoder
-'==============================================================================
-' Class: clsZ80Encoder
-' Purpose: Concrete implementation of CPUEncoder for Zilog Z80 processor
-' Supports: Shadow registers, offset-based operations, block operations
-' Inherits from clsCPUEncoder and implements Z80-specific instruction encoding
-'==============================================================================
-
-Option Explicit
-
-'==============================================================================
-' CPUName Property
-' Returns the name of this CPU
-'==============================================================================
-Public Property Get CPUName() As String
-    CPUName = "Z80"
-End Property
-
-'==============================================================================
-' OpcodeSheetName Property
-' Returns the worksheet name containing Z80 opcode mappings
-'==============================================================================
-Public Property Get OpcodeSheetName() As String
-    OpcodeSheetName = "Z80 Op to Hex"
-End Property
-
-'==============================================================================
-' BuildOpcodeMap - Z80 Implementation
-' Reads Z80 opcode table and builds lookup dictionary
-' Uses the standard table format from "Z80 Op to Hex" sheet
-'==============================================================================
-Public Function BuildOpcodeMap(ByVal wsOp As Worksheet) As Object
-    Dim dict As Object: Set dict = CreateObject("Scripting.Dictionary")
-    dict.CompareMode = vbTextCompare
-    
-    Dim lastRow As Long
-    lastRow = wsOp.Cells(wsOp.Rows.Count, 1).End(xlUp).row
-    
-    Dim r As Long, emptyRun As Long
-    emptyRun = 0
-    
-    ' Columns: A=Opcode, B=OP1, C=OP2, D=Hex, E=Bytes, F=Description, G=Category, H=Prefix, I=Base_Opcode
-    For r = 2 To lastRow
-        Dim mnem As String
-        mnem = UCase$(Trim$(CStr(wsOp.Cells(r, 1).value)))
-        If mnem = "" Then
-            emptyRun = emptyRun + 1
-            If emptyRun >= 10 Then Exit For
-            GoTo ContinueRow
-        Else
-            emptyRun = 0
-        End If
-        
-        Dim op1 As String: op1 = UCase$(Trim$(CStr(wsOp.Cells(r, 2).value)))
-        Dim op2 As String: op2 = UCase$(Trim$(CStr(wsOp.Cells(r, 3).value)))
-        Dim hexTxt As String: hexTxt = UCase$(Trim$(CStr(wsOp.Cells(r, 4).value)))
-        Dim bytes As Long: bytes = CLng(wsOp.Cells(r, 5).value)
-        Dim prefix As String: prefix = UCase$(Trim$(CStr(wsOp.Cells(r, 8).value)))
-        Dim baseOpcode As String: baseOpcode = UCase$(Trim$(CStr(wsOp.Cells(r, 9).value)))
-        
-        If hexTxt = "" Or bytes < 1 Then GoTo ContinueRow
-        
-        Debug.Print r, mnem, op1, op2
-        
-        ' For Z80, we need to store the prefix and base opcode separately
-        Dim opByte As Long
-        opByte = usrHexToDec(baseOpcode) And &HFF&
-        
-        
-        Dim key As String
-        key = mnem & "|" & op1 & "|" & op2
-        
-        If Not dict.Exists(key) Then
-            ' Store: Array(opByte, byteCount, op1_spec, op2_spec, prefix)
-            dict.ADD key, Array(opByte, bytes, op1, op2, prefix)
-        End If
-        
-ContinueRow:
-    Next r
-    
-    Set BuildOpcodeMap = dict
-End Function
-
-'==============================================================================
-' FindOpcode - Z80 Implementation
-' Looks up an instruction in the opcode map with fallback matching
-' Includes Z80-specific operand specs like OFFSET, BIT, REGISTER_INDEX
-'==============================================================================
-Public Function FindOpcode(ByVal opMap As Object, ByVal mnem As String, _
-                          ByVal op1 As String, ByVal op2 As String) As Variant
-    Dim key As String
-    
-    ' Try exact match
-    key = mnem & "|" & op1 & "|" & op2
-    If opMap.Exists(key) Then FindOpcode = opMap(key): Exit Function
-    
-    ' Try with only OP1
-    key = mnem & "|" & op1 & "|"
-    If opMap.Exists(key) Then FindOpcode = opMap(key): Exit Function
-    
-    ' Try with template specs (includes Z80-specific ones)
-    Dim p As Variant
-    For Each p In Array("BYTE", "ADDRESS", "PORT", "DATA", "OFFSET", "BIT", "REGISTER_INDEX")
-        key = mnem & "|" & op1 & "|" & CStr(p)
-        If opMap.Exists(key) Then FindOpcode = opMap(key): Exit Function
-    Next p
-    
-    For Each p In Array("BYTE", "ADDRESS", "PORT", "DATA", "OFFSET", "BIT", "REGISTER_INDEX")
-        key = mnem & "|" & CStr(p) & "|" & op2
-        If opMap.Exists(key) Then FindOpcode = opMap(key): Exit Function
-        key = mnem & "|" & CStr(p) & "|"
-        If opMap.Exists(key) Then FindOpcode = opMap(key): Exit Function
-    Next p
-    
-    ' No match found
-    FindOpcode = Empty
-End Function
-
-'==============================================================================
-' EncodeInstruction - Z80 Specific Implementation
-' Converts Z80 instruction mnemonic and operands to machine bytes
-' Handles: Prefix opcodes (CB, ED, DD, FD), offsets, shadow registers
-'
-' Returns a Variant array of bytes, or Empty if encoding failed
-'==============================================================================
-Public Function EncodeInstruction(ByRef lbls As clsLabels, _
-                                 ByVal opByte As Long, ByVal byteCount As Long, _
-                                 ByVal spec1 As String, ByVal spec2 As String, _
-                                 ByVal op1 As String, ByVal op2 As String, _
-                                 ByVal mnem As String, ByVal cur As Range, _
-                                 ByVal wsCPU As Worksheet) As Variant
-
-    Dim out() As Byte
-    ReDim out(0 To byteCount - 1)
-    
-    ' Check for prefix opcodes (Z80 specific)
-    ' Note: opByte may include prefix already from opcode table
-    ' Format examples: CB 47, DD 7E, ED B0
-    ' The hex column in the table should contain the full encoding
-    
-    Dim i As Long
-    
-    ' For multi-byte instructions (prefix + base)
-    If byteCount > 1 Then
-        ' First check if this is a prefix instruction
-        If mnem = "BIT" Or mnem = "RES" Or mnem = "SET" Then
-            ' CB prefix instructions (bit operations)
-            out(0) = &HCB&
-            out(1) = opByte And &HFF&
-            EncodeInstruction = out
-            Exit Function
-        End If
-        
-        If mnem = "LDIR" Or mnem = "LDDR" Or mnem = "CPIR" Or mnem = "CPDR" Then
-            ' ED prefix block operations
-            out(0) = &HED&
-            out(1) = opByte And &HFF&
-            EncodeInstruction = out
-            Exit Function
-        End If
-        
-        If Left$(op1, 2) = "IX" Or Left$(op1, 2) = "IY" Then
-            ' DD/FD prefix for index register operations
-            Dim prefix As Byte
-            prefix = IIf(Left$(op1, 2) = "IX", &HDD&, &HFD&)
-            
-            out(0) = prefix
-            
-            If byteCount = 3 Then
-                ' Offset-based operation: prefix, base opcode, offset
-                out(1) = opByte And &HFF&
-                ' Offset is in op2, parse as signed byte
-                Dim offset As Integer
-                offset = usrHexToDec(op2)
-                If offset > 127 Then offset = offset - 256 ' Convert to signed
-                out(2) = offset And &HFF&
-            Else
-                ' No offset, just base opcode
-                out(1) = opByte And &HFF&
-            End If
-            
-            EncodeInstruction = out
-            Exit Function
-        End If
-        
-        If mnem = "EX" And op1 = "AF" And op2 = "AF'" Then
-            ' Shadow register exchange: EX AF, AF'
-            out(0) = &H8&
-            EncodeInstruction = out
-            Exit Function
-        End If
-        
-        If mnem = "EXX" Then
-            ' Shadow register exchange all: EXX
-            out(0) = &HD9&
-            EncodeInstruction = out
-            Exit Function
-        End If
-        
-        ' Relative jump (JR, DJNZ)
-        If mnem = "JR" Or mnem = "DJNZ" Then
-            out(0) = opByte And &HFF&
-            ' op1 or op2 contains the relative offset
-            Dim relOffset As Integer
-            If mnem = "DJNZ" Then
-                relOffset = usrHexToDec(op1)
-            Else
-                relOffset = usrHexToDec(op2)
-            End If
-            ' Convert to signed offset
-            If relOffset > 127 Then relOffset = relOffset - 256
-            out(1) = relOffset And &HFF&
-            EncodeInstruction = out
-            Exit Function
-        End If
-    End If
-    
-    ' Fallback to standard encoding (same as 8080)
-    ' First byte is always the opcode
-    out(0) = opByte And &HFF&
-    
-    ' Handle operands based on specification
-    If byteCount = 1 Then
-        ' Single-byte instruction, no operands
-        EncodeInstruction = out
-        Exit Function
-    End If
-    
-    ' 2-byte or 3-byte instruction with operands
-    If byteCount = 2 Then
-        ' 8-bit immediate or register-based
-        If spec1 = "BYTE" Or spec1 = "DATA" Then
-            out(1) = usrHexToDec(op1) And &HFF&
-        End If
-        EncodeInstruction = out
-        Exit Function
-    End If
-    
-    If byteCount = 3 Then
-        ' 16-bit address (little-endian: low byte, high byte)
-        If spec1 = "ADDRESS" Then
-            Dim addr As Long
-            addr = cmpResolveValue16(lbls, op1)
-            out(1) = addr And &HFF&
-            out(2) = (addr \ 256) And &HFF&
-        ElseIf spec1 = "BYTE" And spec2 = "BYTE" Then
-            ' Two 8-bit values
-            out(1) = usrHexToDec(op1) And &HFF&
-            out(2) = usrHexToDec(op2) And &HFF&
-        End If
-        EncodeInstruction = out
-        Exit Function
-    End If
-    
-    ' Fallback
-    EncodeInstruction = out
-
-End Function
-
-'==============================================================================
-' ValidateOperand - Z80 Specific Validation
-' Includes validation for index registers, bit positions, offsets
-'==============================================================================
-Public Function ValidateOperand(ByVal spec As String, ByVal value As String) As Boolean
-    
-    Select Case spec
-        Case "BYTE"
-            ' 8-bit value (0-255)
-            Dim byteVal As Long
-            byteVal = usrHexToDec(value)
-            ValidateOperand = (byteVal >= 0 And byteVal <= 255)
-            
-        Case "ADDRESS"
-            ' 16-bit address (0-65535)
-            Dim addr As Long
-            addr = usrHexToDec(value)
-            ValidateOperand = (addr >= 0 And addr <= 65535)
-            
-        Case "PORT"
-            ' Port number (0-255)
-            Dim port As Long
-            port = usrHexToDec(value)
-            ValidateOperand = (port >= 0 And port <= 255)
-            
-        Case "OFFSET"
-            ' Signed offset (-128 to +127)
-            Dim offset As Integer
-            offset = usrHexToDec(value)
-            If offset > 127 Then offset = offset - 256
-            ValidateOperand = (offset >= -128 And offset <= 127)
-            
-        Case "BIT"
-            ' Bit position (0-7)
-            Dim bitPos As Long
-            bitPos = usrHexToDec(value)
-            ValidateOperand = (bitPos >= 0 And bitPos <= 7)
-            
-        Case "REGISTER_INDEX"
-            ' Index register: IX or IY
-            ValidateOperand = (UCase$(value) = "IX" Or UCase$(value) = "IY")
-            
-        Case Else
-            ' Default: assume valid
-            ValidateOperand = True
-    End Select
-    
-End Function
-
-'==============================================================================
-' Helper: ParseIndexRegisterWithOffset
-' Extracts index register and offset from expressions like "(IX+5)" or "(IY-10)"
-' Returns: Array(register, offset) or Empty if invalid
-'==============================================================================
-Public Function ParseIndexRegisterWithOffset(ByVal expr As String) As Variant
-    
-    expr = Trim$(expr)
-    
-    ' Check for parentheses
-    If Left$(expr, 1) <> "(" Or Right$(expr, 1) <> ")" Then
-        ParseIndexRegisterWithOffset = Empty
-        Exit Function
-    End If
-    
-    ' Remove parentheses
-    expr = Mid$(expr, 2, Len(expr) - 2)
-    
-    ' Look for + or - operator
-    Dim plusPos As Long, minusPos As Long
-    plusPos = InStr(expr, "+")
-    minusPos = InStr(expr, "-", 1)
-    
-    Dim regPart As String, offsetPart As String
-    Dim opPos As Long
-    
-    If plusPos > 0 Then
-        opPos = plusPos
-    ElseIf minusPos > 0 Then
-        opPos = minusPos
-    Else
-        ParseIndexRegisterWithOffset = Empty
-        Exit Function
-    End If
-    
-    regPart = Trim$(Left$(expr, opPos - 1))
-    offsetPart = Trim$(Mid$(expr, opPos))
-    
-    ' Validate register
-    regPart = UCase$(regPart)
-    If regPart <> "IX" And regPart <> "IY" Then
-        ParseIndexRegisterWithOffset = Empty
-        Exit Function
-    End If
-    
-    ' Parse offset
-    Dim offset As Long
-    On Error GoTo InvalidOffset
-    offset = usrHexToDec(offsetPart)
-    On Error GoTo 0
-    
-    ' Return as array
-    ParseIndexRegisterWithOffset = Array(regPart, offset)
-    Exit Function
-    
-InvalidOffset:
-    ParseIndexRegisterWithOffset = Empty
-    
-End Function
-
-
-
