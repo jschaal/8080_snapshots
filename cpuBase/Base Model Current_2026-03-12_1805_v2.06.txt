@@ -1,6 +1,6 @@
 === VBA EXPORT: Base Model Current.xlsm ===
-Timestamp: 3/12/2026 7:58:46 PM
-Version: 2.07
+Timestamp: 3/12/2026 6:05:39 PM
+Version: 2.06
 ================================================================================
 
 ''' Component: ThisWorkbook
@@ -6187,152 +6187,55 @@ Public Function cmpStringToBytesVariant(ByVal s As String) As Variant
     cmpStringToBytesVariant = out
 End Function
 
-'================================================================================
-' Sub:          RefreshMemoryTable
-' Purpose:      Reads the global gMemory object and writes its contents into
-'               the CPU worksheet's memory display table.
-'
-' Table layout (anchored at named range "MemoryTable"):
-'   Col offset  0  = Hex bytes 0-7  (8 cells, one per byte)
-'   Col offset -2  = Address (decimal) written into "MemoryTableAddress" column
-'   Col offset -1  = ASCII  preview  (8 chars: printable or ".")
-'
-' Named ranges used:
-'   MemoryTable        - top-left byte cell of the 8-column hex byte area
-'   MemoryTableAddress - column that holds the row base address (decimal)
-'   MemStart           - hex string of first memory address (e.g. "0100")
-'   MemEnd             - hex string of last  memory address (e.g. "FFFF")
-'                        OR MemSize (number of bytes) is used if MemEnd absent
-'
-' The ASCII column sits between MemoryTableAddress and MemoryTable byte columns.
-' Bytes 0x20-0x7E are displayed as their character; everything else becomes ".".
-'
-' Call after Assemble8080_ToMachine or after the emulator modifies gMemory so
-' the display reflects the live memory state.
-'================================================================================
-'================================================================================
-' Sub:          RefreshMemoryTable
-' Purpose:      Reads gMemory and writes the memory display table on the CPU
-'               worksheet in a single bulk array assignment for maximum speed.
-'
-' Strategy:
-'   1. Allocate a 2-D Variant array sized (totalRows x totalCols).
-'   2. Fill every cell value in VBA memory (no sheet I/O in the loop).
-'   3. Write the entire array to the sheet in ONE Range.Value assignment.
-'   4. Clear only the exact range that was written (no over-clearing).
-'
-' Column layout written (left to right):
-'   col 1  = Address  (decimal base address for the row)
-'   col 2  = ASCII    (8-char preview: printable or ".")
-'   col 3..10 = Hex bytes 0-7  (e.g. "3E", "00", "41" ...)
-'
-' Named ranges consumed:
-'   MemoryTableAddress  - address column anchor cell (used for row/col position)
-'   MemoryTable         - 8-column hex byte area (must start 2 cols right of above)
-'   MemStart            - hex string first address  (e.g. "0100")
-'   MemEnd              - hex string last  address  (e.g. "01FF")
-'                         Falls back to MemStart + MemSize - 1 if MemEnd absent.
-'================================================================================
-'================================================================================
-' Sub:          RefreshMemoryTable
-' Purpose:      Reads gMemory and writes the memory display table on the CPU
-'               worksheet using bulk array assignments for maximum speed.
-'
-' Strategy:
-'   - Builds two separate arrays (address col, byte cols) and writes each
-'     in a single Range.Value call.  The ASCII column is left completely
-'     untouched so any formula there continues to work.
-'   - The write range is anchored at the first DATA row of MemoryTable /
-'     MemoryTableAddress, so the header row above is never touched.
-'
-' Named ranges consumed:
-'   MemoryTableAddress  - first DATA cell of the address column (row 1 = data)
-'   MemoryTable         - first DATA cell of the 8-column hex byte area
-'   MemStart            - hex string first address  (e.g. "0100")
-'   MemEnd              - hex string last  address  (e.g. "01FF")
-'                         Falls back to MemStart + MemSize - 1 if MemEnd absent.
-'================================================================================
-Public Sub RefreshMemoryTable()
-
-    Const BYTES_PER_ROW As Long = 8
-
-    ' ?? 1. Worksheet & anchors ????????????????????????????????????????????????
+Public Sub RefreshMemoryTableBad()
     Dim ws As Worksheet
-    Set ws = ThisWorkbook.Worksheets("CPU")
-
-    ' These named ranges must point to the FIRST DATA ROW (below any header)
-    Dim addrAnchor As Range   ' first data cell of the address column
-    Dim memAnchor  As Range   ' first data cell of MemoryTable (byte col 0)
-    Set addrAnchor = ws.Range("MemoryTableAddress")
-    Set memAnchor = ws.Range("MemoryTable")
-
-    ' ?? 2. Memory window ??????????????????????????????????????????????????????
-    Dim memStart As Long
-    Dim memEnd   As Long
-    memStart = usrHexToDec(CStr(ws.Range("MemStart").value))
-
-    On Error Resume Next
-    Dim memEndRng As Range
-    Set memEndRng = ws.Range("MemEnd")
-    On Error GoTo 0
-    If Not memEndRng Is Nothing Then
-        memEnd = usrHexToDec(CStr(memEndRng.value))
-    Else
-        memEnd = memStart + usrHexToDec(CStr(ws.Range("MemSize").value)) - 1
-    End If
-
-    ' Cap at the physical table row count
-    Dim totalRows As Long
-    totalRows = ((memEnd - memStart) \ BYTES_PER_ROW) + 1
-    If totalRows > memAnchor.Rows.Count Then totalRows = memAnchor.Rows.Count
-
-    ' ?? 3. Pre-build hex lookup: 0-255 -> "00".."FF" ?????????????????????????
-    Dim hexLookup(0 To 255) As String
-    Dim h As Integer
-    For h = 0 To 255
-        hexLookup(h) = Right$("00" & hex$(h), 2)
-    Next h
-
-    ' ?? 4. Allocate arrays ????????????????????????????????????????????????????
-    Dim addrArr() As Variant
-    Dim byteArr() As Variant
-    ReDim addrArr(1 To totalRows, 1 To 1)
-    ReDim byteArr(1 To totalRows, 1 To BYTES_PER_ROW)
-
-    ' ?? 5. Fill arrays in RAM ?????????????????????????????????????????????????
-    Dim rowIdx  As Long
-    Dim colByte As Long
+    Dim baseCell As Range
+    Dim memStart As Long, memEnd As Long
     Dim rowAddr As Long
-    Dim curAddr As Long
-    Dim b       As Long
+    Dim rowOffset As Long
+    Dim colByte As Long
+    Dim b As Byte
 
-    rowAddr = memStart
+    Set ws = ThisWorkbook.Worksheets("CPU")
+    Set baseCell = ws.Range("MemoryTable")   ' Address column, first row
 
-    For rowIdx = 1 To totalRows
+    memStart = usrHexToDec(CStr(ws.Range("MemStart").value))
+    memEnd = usrHexToDec(CStr(ws.Range("MemEnd").value))
 
-        addrArr(rowIdx, 1) = rowAddr
+    'Application.ScreenUpdating = False
 
-        For colByte = 0 To BYTES_PER_ROW - 1
-            curAddr = rowAddr + colByte
-            If curAddr <= memEnd Then
-                b = CLng(gMemory.addr(curAddr)) And &HFF&
-                byteArr(rowIdx, colByte + 1) = hexLookup(b)
-            Else
-                byteArr(rowIdx, colByte + 1) = ""
+    ' --- CLEAR OLD CONTENT (Address + bytes only) ---
+    rowOffset = 0
+    For rowAddr = memStart To memEnd Step 8
+        ' Address
+        baseCell.offset(rowOffset, 0).ClearContents
+
+        ' Bytes 0..7 (columns labeled 0-7)
+        baseCell.offset(rowOffset, 2).Resize(1, 8).ClearContents
+
+        rowOffset = rowOffset + 1
+    Next rowAddr
+
+    ' --- WRITE NEW MEMORY VIEW ---
+    rowOffset = 0
+    For rowAddr = memStart To memEnd Step 8
+
+        ' Address column
+        baseCell.offset(rowOffset, 0).value = rowAddr
+
+        ' Byte columns
+        For colByte = 0 To 7
+            If rowAddr + colByte <= memEnd Then
+                b = gMemory.addr(rowAddr + colByte)
+                baseCell.offset(rowOffset, colByte + 2).value = _
+                    Right$("00" & hex$(b), 2)
             End If
         Next colByte
 
-        rowAddr = rowAddr + BYTES_PER_ROW
-    Next rowIdx
-
-    ' ?? 6. Two bulk writes — address col, then byte cols ?????????????????????
-    Application.ScreenUpdating = False
-
-    addrAnchor.Resize(totalRows, 1).value = addrArr
-    memAnchor.Resize(totalRows, BYTES_PER_ROW).value = byteArr
+        rowOffset = rowOffset + 1
+    Next rowAddr
 
     Application.ScreenUpdating = True
-
 End Sub
 
 '================================================================================
