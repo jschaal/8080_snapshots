@@ -1,0 +1,276 @@
+================================================================================
+ 6510 SHEET TESTS — T098 through T110
+ Add to the Unit Tests sheet starting at the next blank test slot.
+ Each test follows the same layout as existing 8080 tests:
+   Col A  = Test name (Unit_T098 etc.)
+   Col B  = Hex Line  (0, 1, 2, 3...)
+   Col C  = Dec Line  (auto-formula, same as other rows)
+   Col D  = Label
+   Col E  = OpCode
+   Col F  = OP1
+   Col G  = OP2
+   Col H  = Expected Reg  (named range to check, or blank)
+   Col I  = Expected Val  (expected value, or blank)
+   Col J  = (leave as 0)
+ Control table (cols P-T): set CPU = 6510 for all these tests.
+================================================================================
+
+────────────────────────────────────────────────────────────────────────────────
+Unit_T098  "6510 LDA/LDX/LDY immediate + flags"
+────────────────────────────────────────────────────────────────────────────────
+Tests that LDA/LDX/LDY set N and Z flags correctly.
+
+  Hex  Label  OpCode  OP1   OP2   ExpReg  ExpVal
+  0           LDA     #AA               
+  1                               R_A     AA      ← A = $AA
+  1                               N       1       ← bit7 set → negative
+  1                               Z       0
+  2           LDX     #01
+  3                               R_X     01
+  3                               N       0
+  4           LDY     #00
+  5                               R_Y     00
+  5                               Z       1       ← zero flag set
+  6           END
+
+NOTE: Multiple assertions on the same row share the same Hex Line number.
+Each assertion row has the Expected Reg + Expected Val filled in.
+Only the FIRST assertion row for each line needs the OpCode filled in.
+
+────────────────────────────────────────────────────────────────────────────────
+Unit_T099  "6510 TAX/TAY/TXA/TYA transfers"
+────────────────────────────────────────────────────────────────────────────────
+  0           LDA     #42
+  1           TAX
+  2                               R_X     42      ← X = A
+  2                               N       0
+  3           LDA     #80
+  4           TAY
+  5                               R_Y     80      ← Y = A
+  5                               N       1       ← negative
+  6           LDX     #33
+  7           TXA
+  8                               R_A     33      ← A = X
+  9           LDY     #77
+  A           TYA
+  B                               R_A     77      ← A = Y
+  C           END
+
+────────────────────────────────────────────────────────────────────────────────
+Unit_T100  "6510 ADC no carry, carry out, overflow"
+────────────────────────────────────────────────────────────────────────────────
+  0           LDA     #10
+  1           CLC
+  2           ADC     #20
+  3                               R_A     30      ← $10+$20=$30
+  3                               C       0       ← no carry out
+  4           LDA     #FF
+  5           CLC
+  6           ADC     #01
+  7                               R_A     00      ← $FF+$01 wraps
+  7                               C       1       ← carry out
+  7                               Z       1       ← zero result
+  8           LDA     #50
+  9           CLC
+  A           ADC     #50
+  B                               R_A     A0      ← overflow: pos+pos=neg
+  B                               V       1       ← overflow set
+  B                               N       1       ← result negative
+  C           END
+
+────────────────────────────────────────────────────────────────────────────────
+Unit_T101  "6510 SBC basic (SEC before SBC)"
+────────────────────────────────────────────────────────────────────────────────
+  0           LDA     #50
+  1           SEC
+  2           SBC     #10
+  3                               R_A     40      ← $50-$10=$40
+  3                               C       1       ← no borrow
+  4           LDA     #10
+  5           SEC
+  6           SBC     #20
+  7                               R_A     F0      ← $10-$20 borrows
+  7                               C       0       ← borrow (C=0)
+  7                               N       1       ← negative result
+  8           END
+
+────────────────────────────────────────────────────────────────────────────────
+Unit_T102  "6510 INX/INY/DEX/DEY wrap and flags"
+────────────────────────────────────────────────────────────────────────────────
+  0           LDX     #FF
+  1           INX
+  2                               R_X     00      ← $FF+1 wraps to 0
+  2                               Z       1
+  3           LDY     #00
+  4           DEY
+  5                               R_Y     FF      ← $00-1 wraps to $FF
+  5                               N       1
+  6           LDX     #7F
+  7           INX
+  8                               R_X     80
+  8                               N       1       ← crossed into negative
+  9           END
+
+────────────────────────────────────────────────────────────────────────────────
+Unit_T103  "6510 AND/ORA/EOR logic"
+────────────────────────────────────────────────────────────────────────────────
+  0           LDA     #FF
+  1           AND     #0F
+  2                               R_A     0F
+  2                               N       0
+  3           LDA     #F0
+  4           ORA     #0F
+  5                               R_A     FF
+  5                               N       1
+  6           LDA     #FF
+  7           EOR     #FF
+  8                               R_A     00
+  8                               Z       1
+  9           END
+
+────────────────────────────────────────────────────────────────────────────────
+Unit_T104  "6510 ASL/LSR carry and flags"
+────────────────────────────────────────────────────────────────────────────────
+  0           LDA     #81         ← 1000 0001
+  1           ASL     A
+  2                               R_A     02      ← shifted left
+  2                               C       1       ← bit7 -> carry
+  3           LDA     #81
+  4           LSR     A
+  5                               R_A     40      ← shifted right
+  5                               C       1       ← bit0 -> carry
+  5                               N       0       ← LSR always clears N
+  6           END
+
+────────────────────────────────────────────────────────────────────────────────
+Unit_T105  "6510 ROL/ROR through carry"
+────────────────────────────────────────────────────────────────────────────────
+  0           LDA     #80
+  1           CLC
+  2           ROL     A
+  3                               R_A     00      ← bit7 -> carry, 0 in
+  3                               C       1
+  4           LDA     #00
+  5           SEC
+  6           ROR     A
+  7                               R_A     80      ← carry -> bit7
+  7                               C       0
+  7                               N       1
+  8           END
+
+────────────────────────────────────────────────────────────────────────────────
+Unit_T106  "6510 CMP sets flags without changing A"
+────────────────────────────────────────────────────────────────────────────────
+  0           LDA     #50
+  1           CMP     #50         ← equal
+  2                               R_A     50      ← A unchanged
+  2                               Z       1       ← equal
+  2                               C       1       ← no borrow
+  3           CMP     #40         ← A > operand
+  4                               Z       0
+  4                               C       1       ← no borrow
+  5           CMP     #60         ← A < operand
+  6                               Z       0
+  6                               C       0       ← borrow
+  6                               N       1
+  7           END
+
+────────────────────────────────────────────────────────────────────────────────
+Unit_T107  "6510 PHA/PLA stack round-trip"
+────────────────────────────────────────────────────────────────────────────────
+  0           LDA     #AB
+  1           PHA
+  2           LDA     #00         ← clobber A
+  3           PLA
+  4                               R_A     AB      ← restored from stack
+  4                               N       1
+  5           LDA     #11
+  6           PHA
+  7           LDA     #22
+  8           PHA
+  9           PLA
+  A                               R_A     22      ← LIFO: last in first out
+  B           PLA
+  C                               R_A     11
+  D           END
+
+────────────────────────────────────────────────────────────────────────────────
+Unit_T108  "6510 JSR/RTS subroutine call"
+────────────────────────────────────────────────────────────────────────────────
+  0           LDA     #00         ← clear A before call
+  1           JSR     MYSUB       ← call subroutine
+  2           END                 ← should return here
+  3                               R_A     42      ← set by subroutine
+  4  MYSUB    LDA     #42         ← subroutine body
+  5           RTS                 ← return
+
+────────────────────────────────────────────────────────────────────────────────
+Unit_T109  "6510 BEQ/BNE branches taken and not taken"
+────────────────────────────────────────────────────────────────────────────────
+  0           LDA     #00         ← Z=1
+  1           BEQ     SKIP1       ← taken (Z=1)
+  2           LDA     #FF         ← should be skipped
+  3  SKIP1    LDX     #01
+  4                               R_A     00      ← FF was skipped
+  4                               R_X     01      ← branch landed correctly
+  5           LDA     #01         ← Z=0
+  6           BNE     SKIP2       ← taken (Z=0)
+  7           LDA     #FF         ← should be skipped
+  8  SKIP2    LDY     #02
+  9                               R_A     01      ← FF was skipped
+  9                               R_Y     02
+  A           END
+
+────────────────────────────────────────────────────────────────────────────────
+Unit_T110  "6510 BCC/BCS carry branches"
+────────────────────────────────────────────────────────────────────────────────
+  0           CLC                 ← C=0
+  1           BCC     NOCARRY     ← taken
+  2           LDA     #FF         ← skipped
+  3  NOCARRY  LDX     #AA
+  4                               R_X     AA
+  4                               R_A     00      ← FF was skipped
+  5           SEC                 ← C=1
+  6           BCS     HASCARRY    ← taken
+  7           LDA     #FF         ← skipped
+  8  HASCARRY LDY     #BB
+  9                               R_Y     BB
+  9                               R_A     00      ← FF still skipped
+  A           END
+
+================================================================================
+ CONTROL TABLE ENTRIES (add to cols P-T)
+================================================================================
+
+ Test ID     Description                              Run  Compile  CPU
+ Unit_T098   6510 LDA/LDX/LDY immediate + flags        1     0      6510
+ Unit_T099   6510 TAX/TAY/TXA/TYA transfers             1     0      6510
+ Unit_T100   6510 ADC no carry / carry out / overflow   1     0      6510
+ Unit_T101   6510 SBC basic                             1     0      6510
+ Unit_T102   6510 INX/INY/DEX/DEY wrap and flags        1     0      6510
+ Unit_T103   6510 AND/ORA/EOR logic                     1     0      6510
+ Unit_T104   6510 ASL/LSR carry and flags               1     0      6510
+ Unit_T105   6510 ROL/ROR through carry                 1     0      6510
+ Unit_T106   6510 CMP flags without changing A          1     0      6510
+ Unit_T107   6510 PHA/PLA stack round-trip              1     0      6510
+ Unit_T108   6510 JSR/RTS subroutine call               1     0      6510
+ Unit_T109   6510 BEQ/BNE branches taken/not taken      1     0      6510
+ Unit_T110   6510 BCC/BCS carry branches                1     0      6510
+
+================================================================================
+ ENTRY TIPS
+================================================================================
+ 1. Copy an existing 8080 test block as a template (header row + data rows).
+ 2. Change the test name in col A to Unit_T098 etc.
+ 3. Fill cols B-I following the layout above.
+    - Col B: Hex Line (0,1,2... in hex)
+    - Col D: Label (only on rows that define a label)
+    - Col E: OpCode
+    - Col F: OP1
+    - Col G: OP2 (leave blank for 1-operand instructions)
+    - Col H: Expected Reg name (R_A, R_X, R_Y, N, Z, C, V, PC, SP etc.)
+    - Col I: Expected value (hex for registers, 0 or 1 for flags)
+ 4. Rows with only H+I filled (no opcode) are pure assertion rows.
+ 5. Add to control table with CPU = 6510.
+ 6. Set Run = 1 to include in the suite.
+================================================================================

@@ -1,0 +1,184 @@
+================================================================================
+ COMPILER 6510 — MASTER CHECKLIST
+ Apply every step in order. Compile check after each phase.
+================================================================================
+
+FILES NEEDED
+  Compiler6510.bas            — new module (paste in full)
+  Compiler6510_wiring.bas     — reference only (instructions, not paste-in)
+  6510_Op_to_Hex.xlsx         — import sheet into workbook
+
+================================================================================
+ PHASE 1 — Import the opcode sheet
+================================================================================
+
+  [ ] 1a. Open 6510_Op_to_Hex.xlsx in Excel (separate window).
+
+  [ ] 1b. Right-click the "6510 Op to Hex" tab at the bottom.
+          Select "Move or Copy..."
+          In the "To book" dropdown, select your main workbook (.xlsm).
+          Tick "Create a copy".
+          Click OK.
+
+  [ ] 1c. The sheet now appears in your main workbook.
+          Confirm the tab name is exactly:   6510 Op to Hex
+          (no extra spaces — the compiler looks for this exact name)
+
+  [ ] 1d. Close the 6510_Op_to_Hex.xlsx window.
+
+================================================================================
+ PHASE 2 — Add the Compiler6510 module
+================================================================================
+
+  [ ] 2a. In the VBA editor: Insert > Module.
+          In the Properties window (F4), set (Name) to:  Compiler6510
+
+  [ ] 2b. Paste the entire contents of Compiler6510.bas into it.
+
+  [ ] 2c. Compile check: Debug > Compile VBAProject.
+          Expected: zero errors.
+
+================================================================================
+ PHASE 3 — Add AssembleForCPUMode to modGlobals
+================================================================================
+
+  [ ] 3a. Open modGlobals in the VBA editor.
+
+  [ ] 3b. Paste this new sub anywhere after the existing SelectEngine sub:
+
+              Public Sub AssembleForCPUMode()
+                  Select Case CPUMode()
+                      Case "6510": Assemble6510_ToMachine
+                      Case Else:   Assemble8080_ToMachine
+                  End Select
+              End Sub
+
+  [ ] 3c. Compile check: Debug > Compile VBAProject.
+          Expected: zero errors.
+
+================================================================================
+ PHASE 4 — Update ForceCompile in decExecute8080
+================================================================================
+
+  [ ] 4a. Open decExecute8080 in the VBA editor.
+
+  [ ] 4b. Find ForceCompile. It has TWO calls to Assemble8080_ToMachine.
+          Replace BOTH with:  AssembleForCPUMode
+
+          First one (in the "If compile Then ... Exit Sub" block):
+            Find:    Assemble8080_ToMachine
+            Replace: AssembleForCPUMode
+
+          Second one (at the bottom "If compile Then" block):
+            Find:    Assemble8080_ToMachine
+            Replace: AssembleForCPUMode
+
+          Use Ctrl+H scoped to "Current Module" to do both at once.
+
+  [ ] 4c. Compile check: Debug > Compile VBAProject.
+          Expected: zero errors.
+
+================================================================================
+ PHASE 5 — Update TestRunner
+================================================================================
+
+  [ ] 5a. Open the TestRunner module in the VBA editor.
+
+  [ ] 5b. Inside RunDynamicTests, find:
+
+              If compileThis Then Assemble8080_ToMachine
+
+          Replace with:
+
+              If compileThis Then AssembleForCPUMode
+
+          (one occurrence)
+
+  [ ] 5c. Compile check: Debug > Compile VBAProject.
+          Expected: zero errors.
+
+================================================================================
+ PHASE 6 — Update CompileIfNeeded in Compiler8080
+================================================================================
+
+  [ ] 6a. Open Compiler8080 in the VBA editor.
+
+  [ ] 6b. Find CompileIfNeeded. Inside it, find:
+
+              Assemble8080_ToMachine ' or whatever defaults you want
+
+          Replace with:
+
+              AssembleForCPUMode
+
+  [ ] 6c. Compile check: Debug > Compile VBAProject.
+          Expected: zero errors.
+
+================================================================================
+ PHASE 7 — Verify
+================================================================================
+
+  [ ] 7a. Set CPUMode cell to  8080.
+          Run your full unit test suite.
+          Expected: all tests pass — nothing changed for 8080.
+
+  [ ] 7b. Set CPUMode cell to  6510.
+          Enter this minimal program in the CPU grid:
+
+              Label   OpCode  OP1     OP2
+              START   LDA     #AA
+                      LDX     #01
+                      END
+
+          Click Assemble (or whatever button triggers compile).
+          Expected:
+            - errMessage = "Assemble complete (6510)"
+            - MemoryTable row 1 shows:  A9  AA  A2  01  (4 bytes)
+            - Memory display refreshes
+
+  [ ] 7c. Set CPUMode cell to  6510.
+          Test a branch instruction:
+
+              Label   OpCode  OP1     OP2
+              LOOP    LDA     #00
+                      BNE     LOOP
+                      END
+
+          Expected:
+            - LDA #00 encodes as A9 00
+            - BNE LOOP encodes as D0 FC  (offset = -4, i.e. $FC signed)
+            - No assembly error
+
+  [ ] 7d. Test DB and DS:
+
+              Label   OpCode  OP1     OP2
+              MSG     DB      "HI"
+              BUF     DS      04
+                      END
+
+          Expected:
+            - MSG encodes as 48 49 00  (H, I, null)
+            - BUF encodes as 00 00 00 00  (4 zero bytes)
+
+================================================================================
+ QUICK REFERENCE — 6510 addressing mode syntax
+================================================================================
+
+  Immediate      #nn        LDA #4A      load A with value $4A
+  Zero page      nn         LDA 42       load A from $0042
+  Zero page,X    nn,X       LDA 42,X     load A from $0042+X
+  Zero page,Y    nn,Y       LDX 42,Y     load X from $0042+Y
+  Absolute       nnnn       LDA C000     load A from $C000
+  Absolute,X     nnnn,X     LDA C000,X   load A from $C000+X
+  Absolute,Y     nnnn,Y     LDA C000,Y   load A from $C000+Y
+  Indirect       (nnnn)     JMP (C000)   jump via pointer at $C000
+  (Indirect,X)   (nn,X)     LDA (42,X)   zero-page pre-indexed
+  (Indirect),Y   (nn),Y     LDA (42),Y   zero-page post-indexed
+  Accumulator    A          ASL A        (or leave OP1 blank)
+  Implied        (blank)    NOP
+
+  DB "string"    ASCII bytes + $00 null terminator
+  DB 41,42,43    raw bytes (hex or decimal, comma-separated)
+  DS nn          reserve nn zero bytes  (hex n)
+  ORG nnnn       set program counter
+================================================================================

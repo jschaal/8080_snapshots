@@ -1,0 +1,187 @@
+================================================================================
+ FILE 4 OF 4  —  MASTER CHECKLIST
+ Apply every step in order. Do not skip ahead.
+================================================================================
+
+BEFORE YOU START
+  - Revert / discard any partial changes you already made
+  - Open the .xlsm in Excel with the VBA editor open (Alt+F11)
+  - Keep this checklist visible alongside the editor
+
+================================================================================
+ PHASE 1 — modGlobals  (file 1_modGlobals_additions.bas)
+================================================================================
+
+  [ ] 1a. Open modGlobals in the editor.
+
+  [ ] 1b. PASTE the SECTION A declarations at the very top of modGlobals,
+          right after "Option Explicit" and alongside the existing
+          "Private pCPU As clsDecCPU" line.
+          (All the Public gCache*, Public gArr*, Public gBreak,
+           Public gCurrentIter, and Private p6510CPU declarations.)
+
+  [ ] 1c. PASTE the SECTION B functions anywhere after the existing
+          gDecCPU / gMemory property blocks.
+          (InvalidateExecCache, g6510 property, ResetDecCPU6510,
+           CPUMode, IsCPU6510)
+
+  [ ] 1d. FIND the existing SelectEngine sub (currently one line: decExecute).
+          REPLACE the entire sub with the SECTION C version.
+
+  [ ] 1e. Compile check: Debug > Compile VBAProject.
+          Expected: no errors in modGlobals at this point
+          (other modules may still error — that is fine, continue).
+
+================================================================================
+ PHASE 2 — Rename and patch decAssemble  (file 2_decExecute8080_changes.bas)
+================================================================================
+
+  [ ] 2a. In the Project Explorer, click on decAssemble.
+          Press F4 (Properties window).
+          Change (Name) from  decAssemble  to  decExecute8080.
+
+  [ ] 2b. Inside the module, find:
+              Public Sub decExecute()
+          Replace with:
+              Public Sub Execute8080()
+          (exactly one occurrence — use Ctrl+H, scope "Current Module")
+
+  [ ] 2c. DELETE these 13 Private declaration lines from the top of the module:
+
+              Private gCacheValid As Boolean
+              Private gCacheLine0Dec As Long
+              Private gCacheCountRows As Long
+              Private gCacheMemStart As Long
+              Private gCacheMemEnd As Long
+              Private gCacheOfsOpcode As Long, gCacheOfsOp1 As Long, gCacheOfsOp2 As Long, gCacheOfsRowStat As Long, gCacheOfsLabel As Long
+              Private gArrOpcode As Variant
+              Private gArrRowStat As Variant
+              Private gArrOp1 As Variant
+              Private gArrOp2 As Variant
+              Private gArrLabel As Variant
+              Private gBreak As Boolean
+              Private gCurrentIter As Long
+
+          NOTE: do NOT change any other lines. The variable names themselves
+          (gCacheValid, gArrOpcode, gBreak, etc.) are used unchanged throughout
+          the body of Execute8080. They will now resolve to the Public
+          declarations in modGlobals automatically.
+
+  [ ] 2d. DELETE the Private InvalidateCodeCache sub (3 lines):
+
+              Private Sub InvalidateCodeCache()
+                  gCacheValid = False
+              End Sub
+
+  [ ] 2e. Find its ONE call site inside Execute8080 (in the Reset=1 block):
+          Find:    InvalidateCodeCache
+          Replace: InvalidateExecCache
+
+  [ ] 2f. Compile check: Debug > Compile VBAProject.
+          Expected: no errors in decExecute8080.
+
+================================================================================
+ PHASE 3 — Add cls6510CPU  (file cls6510CPU.bas — already generated)
+================================================================================
+
+  [ ] 3a. In the Project Explorer: Insert > Class Module.
+          Set (Name) to  cls6510CPU.
+
+  [ ] 3b. Paste the entire contents of cls6510CPU.bas into it.
+
+  [ ] 3c. Compile check: Debug > Compile VBAProject.
+          Expected: cls6510CPU compiles cleanly.
+
+================================================================================
+ PHASE 4 — Add decExecute6510  (file 3_decExecute6510.bas)
+================================================================================
+
+  [ ] 4a. Insert > Module. Set (Name) to  decExecute6510.
+
+  [ ] 4b. Paste the entire contents of 3_decExecute6510.bas into it.
+          NOTE: the TraceAppend6510 sub at the bottom is commented out —
+          leave it commented for now, you will handle it in Phase 5.
+
+  [ ] 4c. Compile check: Debug > Compile VBAProject.
+          Expected: decExecute6510 compiles cleanly.
+
+================================================================================
+ PHASE 5 — Patch the Trace module
+================================================================================
+
+  [ ] 5a. Open the Trace module in the editor.
+
+  [ ] 5b. Scroll to the bottom, after the existing TraceAppend sub.
+
+  [ ] 5c. Copy the TraceAppend6510 block from the bottom of
+          3_decExecute6510.bas (lines starting with the commented-out
+          'Public Sub TraceAppend6510...).
+          PASTE it into the Trace module and UNCOMMENT it
+          (remove the leading ' from every line).
+
+  [ ] 5d. Compile check: Debug > Compile VBAProject.
+          Expected: full project compiles with zero errors.
+
+================================================================================
+ PHASE 6 — CPU sheet setup
+================================================================================
+
+  [ ] 6a. Add a cell for CPU mode selection. Suggested location: near your
+          existing Step/Reset controls.
+          - Type a value in a blank cell: 8080
+          - Name the cell: CPUMode
+            (Formulas > Name Manager > New, or just type in the Name Box)
+          - Add a dropdown: Data Validation > List > source: 8080,Z80,6510
+
+  [ ] 6b. Add named ranges for the 6510 register display cells.
+          These can be empty placeholder cells for now — just name them:
+            R_X   (X register display, mirrors existing R_A / R_B layout)
+            R_Y   (Y register display)
+            SR    (packed status register byte)
+          R_A, PC, SP already exist and are reused unchanged.
+
+  [ ] 6c. Add named ranges for the 6510 flag display cells:
+            N   (Negative)
+            V   (oVerflow)
+            B   (Break)
+            D   (Decimal)
+            I   (Interrupt disable)
+            C   (Carry)
+          Z already exists (Zero flag) — reused unchanged.
+
+================================================================================
+ PHASE 7 — Verify
+================================================================================
+
+  [ ] 7a. Set CPUMode cell to  8080.
+          Click Run. Confirm existing 8080 programs still execute correctly.
+
+  [ ] 7b. Set CPUMode cell to  6510.
+          Click Run on a blank/empty program grid.
+          Expected: "Execution Complete" with no errors.
+
+  [ ] 7c. Ctrl+F in the VBA editor, search "Current Project" for:
+            decAssemble   — should find zero hits (only comments are OK)
+            decExecute    — should find zero hits except in Execute8080 itself
+            InvalidateCodeCache  — should find zero hits
+
+================================================================================
+ BUTTONS  (no changes needed)
+================================================================================
+
+  Your three spreadsheet buttons call BTN_Run, BTN_Step, and BTN_Restart.
+  All three call SelectEngine internally.
+  SelectEngine now routes 8080/Z80 -> Execute8080 and 6510 -> Execute6510.
+  The button macro names on the sheet are unchanged. Nothing to do here.
+
+================================================================================
+ SUMMARY OF FILES
+================================================================================
+
+  1_modGlobals_additions.bas   Paste into modGlobals (3 sections)
+  2_decExecute8080_changes.bas Instructions only — what to edit in decAssemble
+  3_decExecute6510.bas         New module — paste in full
+  cls6510CPU.bas               New class — paste in full
+  6510_Op_to_Hex.xlsx          Import sheet into workbook
+
+================================================================================
