@@ -1,6 +1,6 @@
 === VBA EXPORT: 6510 Model Current.xlsm ===
-Timestamp: 3/24/2026 5:30:07 PM
-Version: 2.20
+Timestamp: 3/24/2026 11:16:55 AM
+Version: 2.18
 ================================================================================
 
 ''' Component: ThisWorkbook
@@ -5547,7 +5547,6 @@ Public Const ERR_BAD_OPCODE As Long = -9999
 Public Const ERR_MAX_ITERS As Long = -9998
 Public Const ERR_STOP As Long = -9997
 
-Public gMemHighWater As Long   ' highest address written by last compile; 0 = unknown
 '------------------------------------------------------------------------------
 ' gCPU
 ' Returns the shared CPU instance, creating it if necessary.
@@ -5565,7 +5564,6 @@ End Property
 '------------------------------------------------------------------------------
 Public Sub usrMemReset()
     Set pMemory = Nothing
-    gMemHighWater = 0
 End Sub
 '------------------------------------------------------------------------------
 ' gCPU
@@ -6501,7 +6499,7 @@ Public Sub RefreshMemoryTable()
 
     Const BYTES_PER_ROW As Long = 8
 
-    ' 1. Worksheet & anchors
+    ' ?? 1. Worksheet & anchors ????????????????????????????????????????????????
     Dim ws As Worksheet
     Set ws = ThisWorkbook.Worksheets("CPU")
 
@@ -6511,7 +6509,7 @@ Public Sub RefreshMemoryTable()
     Set addrAnchor = ws.Range("MemoryTableAddress")
     Set memAnchor = ws.Range("MemoryTable")
 
-    ' 2. Memory window
+    ' ?? 2. Memory window ??????????????????????????????????????????????????????
     Dim memStart As Long
     Dim memEnd   As Long
     memStart = usrHexToDec(CStr(ws.Range("MemStart").value))
@@ -6531,23 +6529,20 @@ Public Sub RefreshMemoryTable()
     totalRows = ((memEnd - memStart) \ BYTES_PER_ROW) + 1
     If totalRows > memAnchor.Rows.Count Then totalRows = memAnchor.Rows.Count
 
-    ' 3. Pre-build hex lookup: 0-255 -> "00".."FF"
+    ' ?? 3. Pre-build hex lookup: 0-255 -> "00".."FF" ?????????????????????????
     Dim hexLookup(0 To 255) As String
     Dim h As Integer
     For h = 0 To 255
         hexLookup(h) = Right$("00" & Hex$(h), 2)
     Next h
 
-    ' 4. Allocate arrays
+    ' ?? 4. Allocate arrays ????????????????????????????????????????????????????
     Dim addrArr() As Variant
     Dim byteArr() As Variant
     ReDim addrArr(1 To totalRows, 1 To 1)
     ReDim byteArr(1 To totalRows, 1 To BYTES_PER_ROW)
 
-    ' 5. Fill arrays
-    '    Cells beyond gMemHighWater are left as "" (blank) so that only
-    '    bytes actually emitted by the compiler are displayed — identical
-    '    to the 8080 behaviour where trailing zero-memory rows are hidden.
+    ' ?? 5. Fill arrays in RAM ?????????????????????????????????????????????????
     Dim rowIdx  As Long
     Dim colByte As Long
     Dim rowAddr As Long
@@ -6558,29 +6553,22 @@ Public Sub RefreshMemoryTable()
 
     For rowIdx = 1 To totalRows
 
-        ' Address column: blank the row if it starts beyond the high-water mark
-        If gMemHighWater > 0 And rowAddr > gMemHighWater Then
-            addrArr(rowIdx, 1) = ""
-        Else
-            addrArr(rowIdx, 1) = rowAddr
-        End If
+        addrArr(rowIdx, 1) = rowAddr
 
         For colByte = 0 To BYTES_PER_ROW - 1
             curAddr = rowAddr + colByte
-            If curAddr > memEnd Then
-                byteArr(rowIdx, colByte + 1) = ""
-            ElseIf gMemHighWater > 0 And curAddr > gMemHighWater Then
-                byteArr(rowIdx, colByte + 1) = ""   ' beyond last compiled byte
-            Else
+            If curAddr <= memEnd Then
                 b = CLng(gMemory.addr(curAddr)) And &HFF&
                 byteArr(rowIdx, colByte + 1) = hexLookup(b)
+            Else
+                byteArr(rowIdx, colByte + 1) = ""
             End If
         Next colByte
 
         rowAddr = rowAddr + BYTES_PER_ROW
     Next rowIdx
 
-    ' 6. Two bulk writes — address col, then byte cols
+    ' ?? 6. Two bulk writes — address col, then byte cols ?????????????????????
     Application.ScreenUpdating = False
 
     addrAnchor.Resize(totalRows, 1).value = addrArr
@@ -7566,7 +7554,7 @@ Public Sub EmitBytesToMemoryTable(ByVal wsCPU As Worksheet, _
  ByVal bytesOut As Variant, _
  ByRef myMem As clsMemory, _
  Optional ByVal addrCol As Long = 0)
-
+ 
     Dim i As Long
     Dim baseAddr As Long
     Dim lastTargetRow As Long
@@ -7597,9 +7585,6 @@ Public Sub EmitBytesToMemoryTable(ByVal wsCPU As Worksheet, _
         rngMem.Cells(targetRow, targetCol).value = Right$("00" & Hex$(CLng(bytesOut(i)) And &HFF&), 2)
         myMem.addr(addr) = CLng(bytesOut(i)) And &HFF&
 
-        ' Track the highest address written so RefreshMemoryTable can blank the rest
-        If addr > gMemHighWater Then gMemHighWater = addr
-
         baseAddr = memStartDec + (rowIndex * BYTES_PER_MEMROW)
         lastTargetRow = targetRow
     Next i
@@ -7610,6 +7595,7 @@ Public Sub EmitBytesToMemoryTable(ByVal wsCPU As Worksheet, _
     End If
 
 End Sub
+
 ' =============================================================================
 ' Opcode map from "8080 Op to Hex" table: key = MNEMONIC|OP1SPEC|OP2SPEC
 ' =============================================================================

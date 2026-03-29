@@ -1,6 +1,6 @@
 === VBA EXPORT: 6510 Model Current.xlsm ===
-Timestamp: 3/24/2026 5:30:07 PM
-Version: 2.20
+Timestamp: 3/23/2026 2:05:43 PM
+Version: 2.15
 ================================================================================
 
 ''' Component: ThisWorkbook
@@ -339,22 +339,20 @@ Public Sub RunDynamicTests()
     If overrideSkipBreaks Then Range("SkipBreaks") = 1
 
     ' --- Column lookups ---
-    ' runCol and compileCol live in the program area header (col M and N),
-    ' read via nameRow (the program area row returned by DiscoverAllTests).
-    runCol = wsTest.Range("RunTest").Column          ' col M
-    compileCol = wsTest.Range("CompileTest").Column  ' col N
-    resultsCol = wsTest.Range("TestRunner").Column   ' col K
+    runCol = wsTest.Range("RunTest").Column
+    compileCol = wsTest.Range("CompileTest").Column
+    resultsCol = wsTest.Range("TestRunner").Column
 
-    ' cpuCol lives in the control table (col T), read via ctrlRow.
+    ' CPUTest column is optional
     On Error Resume Next
     cpuCol = wsTest.Range("CPUTest").Column
     If Err.Number <> 0 Then cpuCol = 0
     On Error GoTo 0
 
-    ' --- Control table anchor for CPU column lookup only ---
+    ' --- Control table anchor (for reading Run/Compile/CPU per test) ---
     ' nameRow from DiscoverAllTests = program area row (col A).
-    ' The CPU column is only in the control table (cols P-T).
-    ' We match testName against col P to find the control table row.
+    ' Control table lives in cols P-T starting at Range("TestTable").
+    ' We look up each test name in col P to get the correct control row.
     Dim ctrlAnchor  As Range:  Set ctrlAnchor = wsTest.Range("TestTable")
     Dim ctrlLastRow As Long
     ctrlLastRow = wsTest.Cells(wsTest.Rows.Count, ctrlAnchor.Column).End(xlUp).row
@@ -374,11 +372,22 @@ Public Sub RunDynamicTests()
     For Each t In tests
         Dim testName  As String: testName = CStr(t(0))
         Dim testRange As Range:  Set testRange = t(1)
-        Dim nameRow   As Long:   nameRow = CLng(t(2))    ' program area row
+        Dim nameRow   As Long:   nameRow = CLng(t(2))     ' program area row (col A)
 
-        ' Run and Compile flags come from the program area header row (nameRow)
-        Dim runThis As Boolean
-        runThis = (val(wsTest.Cells(nameRow, runCol).value) = 1)
+        ' --- Resolve control table row for this test ---
+        ' runCol / compileCol / cpuCol are in the control table, not the program area.
+        Dim ctrlRow As Long: ctrlRow = 0
+        Dim ctrlIdx As Variant
+        ctrlIdx = Application.Match(testName, ctrlNames, 0)
+        If Not IsError(ctrlIdx) Then
+            ctrlRow = ctrlNames.row + CLng(ctrlIdx) - 1
+        End If
+
+        ' --- Decide whether to run ---
+        Dim runThis As Boolean: runThis = False
+        If ctrlRow > 0 Then
+            runThis = (val(wsTest.Cells(ctrlRow, runCol).value) = 1)
+        End If
 
         If runThis Then
             If testName = "Unit_VBA" Then
@@ -412,25 +421,22 @@ Public Sub RunDynamicTests()
 
                     If TestHasConsoleAssertions(testRange) Then ClearConsole
 
-                    ' C) Set CPU mode BEFORE compile and execute.
-                    '    CPU column is only in the control table - look it up by name.
+                    ' C) Set CPU mode for this test BEFORE compile and execute
+                    '    Read from control table row, not program area row
                     savedCPUMode = CPUMode()
-                    testCPUMode = "8080"    ' safe default
-                    If cpuCol > 0 Then
-                        Dim ctrlIdx As Variant
-                        ctrlIdx = Application.Match(testName, ctrlNames, 0)
-                        If Not IsError(ctrlIdx) Then
-                            Dim ctrlRow As Long
-                            ctrlRow = ctrlNames.row + CLng(ctrlIdx) - 1
-                            Dim rawCPU As String
-                            rawCPU = UCase$(Trim$(CStr(wsTest.Cells(ctrlRow, cpuCol).value)))
-                            If rawCPU <> "" Then testCPUMode = rawCPU
-                        End If
+                    testCPUMode = "8080"    ' default if blank or not found
+                    If cpuCol > 0 And ctrlRow > 0 Then
+                        Dim rawCPU As String
+                        rawCPU = UCase$(Trim$(CStr(wsTest.Cells(ctrlRow, cpuCol).value)))
+                        If rawCPU <> "" Then testCPUMode = rawCPU
                     End If
                     wsEMU.Range("CPUMode").value = testCPUMode
 
                     ' D) Compile if requested (uses now-correct CPUMode)
-                    compileThis = (val(wsTest.Cells(nameRow, compileCol).value) = 1)
+                    compileThis = False
+                    If ctrlRow > 0 Then
+                        compileThis = (val(wsTest.Cells(ctrlRow, compileCol).value) = 1)
+                    End If
                     If compileThis Then AssembleForCPUMode
 
                     ' E) Execute
@@ -440,7 +446,7 @@ Public Sub RunDynamicTests()
                     Application.Calculate
                     SelectEngine
 
-                    ' F) Restore CPUMode to what user had selected
+                    ' F) Restore CPUMode
                     wsEMU.Range("CPUMode").value = savedCPUMode
 
                     ' G) Validate and record result
@@ -5547,7 +5553,6 @@ Public Const ERR_BAD_OPCODE As Long = -9999
 Public Const ERR_MAX_ITERS As Long = -9998
 Public Const ERR_STOP As Long = -9997
 
-Public gMemHighWater As Long   ' highest address written by last compile; 0 = unknown
 '------------------------------------------------------------------------------
 ' gCPU
 ' Returns the shared CPU instance, creating it if necessary.
@@ -5565,7 +5570,6 @@ End Property
 '------------------------------------------------------------------------------
 Public Sub usrMemReset()
     Set pMemory = Nothing
-    gMemHighWater = 0
 End Sub
 '------------------------------------------------------------------------------
 ' gCPU
@@ -5887,7 +5891,7 @@ Public Function HlpGetInstructionSize( _
                 size = 0
 
             Case "END", "HLT", "STP"
-                size = 1
+                size = 0
 
             ' DB: count chars in the string literal + 1 null terminator,
             '     or count comma-separated byte tokens
@@ -6501,7 +6505,7 @@ Public Sub RefreshMemoryTable()
 
     Const BYTES_PER_ROW As Long = 8
 
-    ' 1. Worksheet & anchors
+    ' ?? 1. Worksheet & anchors ????????????????????????????????????????????????
     Dim ws As Worksheet
     Set ws = ThisWorkbook.Worksheets("CPU")
 
@@ -6511,7 +6515,7 @@ Public Sub RefreshMemoryTable()
     Set addrAnchor = ws.Range("MemoryTableAddress")
     Set memAnchor = ws.Range("MemoryTable")
 
-    ' 2. Memory window
+    ' ?? 2. Memory window ??????????????????????????????????????????????????????
     Dim memStart As Long
     Dim memEnd   As Long
     memStart = usrHexToDec(CStr(ws.Range("MemStart").value))
@@ -6531,23 +6535,20 @@ Public Sub RefreshMemoryTable()
     totalRows = ((memEnd - memStart) \ BYTES_PER_ROW) + 1
     If totalRows > memAnchor.Rows.Count Then totalRows = memAnchor.Rows.Count
 
-    ' 3. Pre-build hex lookup: 0-255 -> "00".."FF"
+    ' ?? 3. Pre-build hex lookup: 0-255 -> "00".."FF" ?????????????????????????
     Dim hexLookup(0 To 255) As String
     Dim h As Integer
     For h = 0 To 255
         hexLookup(h) = Right$("00" & Hex$(h), 2)
     Next h
 
-    ' 4. Allocate arrays
+    ' ?? 4. Allocate arrays ????????????????????????????????????????????????????
     Dim addrArr() As Variant
     Dim byteArr() As Variant
     ReDim addrArr(1 To totalRows, 1 To 1)
     ReDim byteArr(1 To totalRows, 1 To BYTES_PER_ROW)
 
-    ' 5. Fill arrays
-    '    Cells beyond gMemHighWater are left as "" (blank) so that only
-    '    bytes actually emitted by the compiler are displayed — identical
-    '    to the 8080 behaviour where trailing zero-memory rows are hidden.
+    ' ?? 5. Fill arrays in RAM ?????????????????????????????????????????????????
     Dim rowIdx  As Long
     Dim colByte As Long
     Dim rowAddr As Long
@@ -6558,29 +6559,22 @@ Public Sub RefreshMemoryTable()
 
     For rowIdx = 1 To totalRows
 
-        ' Address column: blank the row if it starts beyond the high-water mark
-        If gMemHighWater > 0 And rowAddr > gMemHighWater Then
-            addrArr(rowIdx, 1) = ""
-        Else
-            addrArr(rowIdx, 1) = rowAddr
-        End If
+        addrArr(rowIdx, 1) = rowAddr
 
         For colByte = 0 To BYTES_PER_ROW - 1
             curAddr = rowAddr + colByte
-            If curAddr > memEnd Then
-                byteArr(rowIdx, colByte + 1) = ""
-            ElseIf gMemHighWater > 0 And curAddr > gMemHighWater Then
-                byteArr(rowIdx, colByte + 1) = ""   ' beyond last compiled byte
-            Else
+            If curAddr <= memEnd Then
                 b = CLng(gMemory.addr(curAddr)) And &HFF&
                 byteArr(rowIdx, colByte + 1) = hexLookup(b)
+            Else
+                byteArr(rowIdx, colByte + 1) = ""
             End If
         Next colByte
 
         rowAddr = rowAddr + BYTES_PER_ROW
     Next rowIdx
 
-    ' 6. Two bulk writes — address col, then byte cols
+    ' ?? 6. Two bulk writes — address col, then byte cols ?????????????????????
     Application.ScreenUpdating = False
 
     addrAnchor.Resize(totalRows, 1).value = addrArr
@@ -6761,7 +6755,7 @@ Public Sub Execute8080()
     Dim opcode As String
     Dim op1 As String, op2 As String, label As String
     Dim ofs_opcode As Long, ofs_op1 As Long, ofs_op2 As Long, ofs_rowstat As Long, ofs_label As Long
-    Dim reset As Long, errcode As Long
+    Dim Reset As Long, errcode As Long
     Dim rowStat As String
     Dim memStart As Long, memEnd As Long
     Dim myCpu As clsDecCPU
@@ -6801,18 +6795,11 @@ Public Sub Execute8080()
 
     debugMode = (Range("Debug").value = 1)
     stepMode = (Range("Step").value = 1)
-    reset = Range("Reset").value
+    Reset = Range("Reset").value
     skipBreaks = Range("SkipBreaks") = 1
     traceReads = TraceMemReads()
     maxIters = Range("Max_Iters").value
     Range("Stop").value = 0
-    
-    Dim atEnd As Boolean: atEnd = CLng(Range("AtEnd").value) = 1
-    'if at end of program auto reset
-    If atEnd Then
-        reset = 1
-        Range("AtEnd").value = 0
-    End If
 
     errcode = 0
     endedByEnd = False
@@ -6823,7 +6810,7 @@ Public Sub Execute8080()
     Range("errMessage").value = ""
 
     ' check first and only first line for an org opcode to set global memory location
-    If Range("Line0").offset(0, ofs_opcode) = "ORG" And reset = 1 Then
+    If Range("Line0").offset(0, ofs_opcode) = "ORG" And Reset = 1 Then
         op1 = Range("Line0").offset(0, ofs_op1).value
         If usrValIsHexString(op1) Then
             Range("MemStart").value = op1
@@ -6837,7 +6824,7 @@ Public Sub Execute8080()
     Set myCpu = gDecCPU                                         ' persistent CPU instance
 
     ' ========= Reset / continuation =========
-    If reset = 1 Then
+    If Reset = 1 Then
         ' Fresh run / Step Start: reset CPU and rebuild cache
         If TraceEnabled() Then TraceClear
         ForceCompile (False)
@@ -7256,7 +7243,6 @@ ExecFinalize:
         Range("errMessage") = "Break at Line " & pc_dec
         Range("Reset").value = 0
     ElseIf endedByEnd Then
-        Range("AtEnd").value = 1
         Range("errMessage") = "Execution Complete"
     End If
 End Sub
@@ -7566,7 +7552,7 @@ Public Sub EmitBytesToMemoryTable(ByVal wsCPU As Worksheet, _
  ByVal bytesOut As Variant, _
  ByRef myMem As clsMemory, _
  Optional ByVal addrCol As Long = 0)
-
+ 
     Dim i As Long
     Dim baseAddr As Long
     Dim lastTargetRow As Long
@@ -7597,9 +7583,6 @@ Public Sub EmitBytesToMemoryTable(ByVal wsCPU As Worksheet, _
         rngMem.Cells(targetRow, targetCol).value = Right$("00" & Hex$(CLng(bytesOut(i)) And &HFF&), 2)
         myMem.addr(addr) = CLng(bytesOut(i)) And &HFF&
 
-        ' Track the highest address written so RefreshMemoryTable can blank the rest
-        If addr > gMemHighWater Then gMemHighWater = addr
-
         baseAddr = memStartDec + (rowIndex * BYTES_PER_MEMROW)
         lastTargetRow = targetRow
     Next i
@@ -7610,6 +7593,7 @@ Public Sub EmitBytesToMemoryTable(ByVal wsCPU As Worksheet, _
     End If
 
 End Sub
+
 ' =============================================================================
 ' Opcode map from "8080 Op to Hex" table: key = MNEMONIC|OP1SPEC|OP2SPEC
 ' =============================================================================
@@ -10252,120 +10236,49 @@ Public Function JMP(ByVal op1 As String) As Long
         target = HlpResolveAddr(op1, 600, "JMP")
         If pLastErrCode <> 0 Then JMP = pLastErrCode: Exit Function
     End If
-
-    ' Set PC to clsAddressLast of target so IncPC() in the execute loop
-    ' advances INTO the target row (mirrors 8080 JMP/CALL_ pattern exactly).
-    Dim addrRec As clsAddrRecord
-    Set addrRec = pAddressList.GetAddr(target)
-    If Not addrRec Is Nothing Then
-        pRegs("PC") = addrRec.clsAddressLast And &HFFFF&
-    Else
-        pRegs("PC") = (target - 1) And &HFFFF&   ' fallback: target not in address list
-    End If
-
+    pRegs("PC") = target And &HFFFF&
     mUIRegsDirty = True
     JMP = 0
 End Function
+
 ' ------------------------------------------------------------------------------
 ' JSR  Jump to Subroutine
 ' Pushes (PC - 1) onto stack (address of last byte of JSR instruction).
 ' In the row-based model "PC" at call time == address of JSR row, so we
 ' push (PC) and RTS adds 1 — net effect is identical to hardware.
+' ------------------------------------------------------------------------------
 Public Function JSR(ByVal op1 As String) As Long
     Dim target As Long
     target = HlpResolveAddr(op1, 610, "JSR")
     If pLastErrCode <> 0 Then JSR = pLastErrCode: Exit Function
 
-    ' Compute return address = clsAddressNext of the JSR row.
-    ' RTS will look this up via clsAddressLast so IncPC() lands on it.
+    ' Push current PC (return address - 1 matches hardware; RTS adds 1)
     Dim retAddr As Long
-    Dim jsrRec As clsAddrRecord
-    Set jsrRec = pAddressList.GetAddr(pRegs("PC"))
-    If Not jsrRec Is Nothing Then
-        retAddr = jsrRec.clsAddressNext And &HFFFF&
-    Else
-        retAddr = (pRegs("PC") + 3) And &HFFFF&    ' fallback: JSR is 3 bytes
-    End If
+    retAddr = pRegs("PC") And &HFFFF&
+    HlpStackPush CByte((retAddr \ 256) And 255)   ' high byte first
+    HlpStackPush CByte(retAddr And 255)            ' low byte
 
-    ' Push high byte then low byte onto pStack (mirrors 8080 CALL_).
-    ' pStack.clsPUSH writes the byte to pMemory AND records it for ShowStack display.
-    Dim sp As Long
-    sp = pRegs("SP") And 255
-    Dim label As String: label = "JSR " & op1
-
-    sp = (sp - 1) And 255
-    pStack.clsPUSH &H100& + sp, (retAddr \ 256) And 255, label   ' high byte
-
-    sp = (sp - 1) And 255
-    pStack.clsPUSH &H100& + sp, retAddr And 255, label            ' low byte
-
-    pRegs("SP") = sp
-    mUIStackDirty = True
-
-    ' Set PC to clsAddressLast of target so IncPC() advances INTO the subroutine.
-    Dim targetRec As clsAddrRecord
-    Set targetRec = pAddressList.GetAddr(target)
-    If Not targetRec Is Nothing Then
-        pRegs("PC") = targetRec.clsAddressLast And &HFFFF&
-    Else
-        pRegs("PC") = (target - 1) And &HFFFF&     ' fallback
-    End If
-
+    pRegs("PC") = target And &HFFFF&
     mUIRegsDirty = True
+    mUIStackDirty = True
     JSR = 0
 End Function
+
 ' ------------------------------------------------------------------------------
 ' RTS  Return from Subroutine
 ' Pops 16-bit address (low then high) and adds 1.
 ' ------------------------------------------------------------------------------
 Public Function RTS() As Long
-    If pStack.Count = 0 Then
-        SetError 620, "RTS: Stack underflow"
-        RTS = 620
-        Exit Function
-    End If
-
-    ' Validate top of stack was pushed by JSR
-    Dim peek As clsDecRegisterState
-    Set peek = pStack.clsPeek
-    If Left$(peek.RegisterName, 3) <> "JSR" Then
-        SetError 621, "RTS: Top of stack not from JSR: " & peek.RegisterName
-        RTS = 621
-        Exit Function
-    End If
-
-    ' Pop low byte then high byte (mirrors 8080 RET exactly)
-    Dim sp As Long
-    sp = pRegs("SP") And 255
-
-    Dim loRec As clsDecRegisterState
-    Set loRec = pStack.clsPOP
-    sp = (sp + 1) And 255
-    Dim lo As Long: lo = loRec.value
-
-    Dim hiRec As clsDecRegisterState
-    Set hiRec = pStack.clsPOP
-    sp = (sp + 1) And 255
-    Dim hi As Long: hi = hiRec.value
-
-    pRegs("SP") = sp
-    mUIStackDirty = True
-
-    ' Return to exact address from stack; use clsAddressLast so IncPC() lands on it
-    Dim retAddr As Long
-    retAddr = (hi * 256&) Or lo
-
-    Dim addrRec As clsAddrRecord
-    Set addrRec = pAddressList.GetAddr(retAddr)
-    If Not addrRec Is Nothing Then
-        pRegs("PC") = addrRec.clsAddressLast And &HFFFF&
-    Else
-        pRegs("PC") = (retAddr - 1) And &HFFFF&    ' fallback
-    End If
-
+    Dim lo As Long, hi As Long
+    lo = CLng(HlpStackPull())
+    hi = CLng(HlpStackPull())
+    pRegs("PC") = ((hi * 256&) Or lo) + 1
+    pRegs("PC") = pRegs("PC") And &HFFFF&
     mUIRegsDirty = True
+    mUIStackDirty = True
     RTS = 0
 End Function
+
 ' ------------------------------------------------------------------------------
 ' RTI  Return from Interrupt
 ' Pops SR (flags), then low byte of PC, then high byte of PC.
@@ -10373,30 +10286,17 @@ End Function
 ' ------------------------------------------------------------------------------
 Public Function RTI() As Long
     Dim sr As Byte, lo As Long, hi As Long
-
     sr = HlpStackPull()
     HlpFlagUnpack sr
-
     lo = CLng(HlpStackPull())
     hi = CLng(HlpStackPull())
-
-    Dim retAddr As Long
-    retAddr = (hi * 256&) Or lo
-
-    ' Use clsAddressLast so IncPC() lands on retAddr (mirrors RTS pattern).
-    Dim addrRec As clsAddrRecord
-    Set addrRec = pAddressList.GetAddr(retAddr)
-    If Not addrRec Is Nothing Then
-        pRegs("PC") = addrRec.clsAddressLast And &HFFFF&
-    Else
-        pRegs("PC") = (retAddr - 1) And &HFFFF&
-    End If
-
+    pRegs("PC") = (hi * 256&) Or lo
     mUIRegsDirty = True
     mUIFlagsDirty = True
     mUIStackDirty = True
     RTI = 0
 End Function
+
 ' ------------------------------------------------------------------------------
 ' BRK  Force Break (software interrupt)
 ' Pushes PC+1 (skip padding byte) then SR with B=1; sets I=1; jumps to
@@ -10549,19 +10449,15 @@ End Function
 '================================================================================
 Public Sub RefreshStack(Optional ByVal force As Boolean = False)
     If Not (mUIStackDirty Or force) Then Exit Sub
-
-    ' Update StackStart to show current SP as 01xx
+    ' Delegate to the shared clsDecStack display helper if you wire it up,
+    ' or write the raw SP / stack-page bytes directly to the sheet here.
+    ' Minimal implementation: just show SP in the StackStart named range.
     Dim wsCPU As Worksheet
     Set wsCPU = ThisWorkbook.Worksheets("CPU")
-    wsCPU.Range("StackStart").value = "01" & Right$("00" & Hex$(pRegs("SP") And 255), 2)
-
-    ' Delegate display to pStack.ShowStack — identical to how clsDecCPU.RefreshStack works.
-    ' ShowStack writes address/value/label into stackView offset columns 1/2/3,
-    ' and clears stackDetails first. Top of stack at row 1, oldest at bottom.
-    pStack.ShowStack True
-
+    wsCPU.Range("StackStart").value = Right$("00" & Hex$(pRegs("SP") And 255), 2)
     mUIStackDirty = False
 End Sub
+
 '================================================================================
 ' INTERNAL HELPER FUNCTIONS
 '================================================================================
@@ -10670,29 +10566,18 @@ End Sub
 '------------------------------------------------------------------------------
 Private Function HlpBranch(ByVal condition As Boolean, ByVal op1 As String, _
     ByVal errorBase As Long, ByVal mnem As String) As Long
-
     If Not condition Then
         HlpBranch = 0
         Exit Function
     End If
-
     Dim target As Long
     target = HlpResolveAddr(op1, errorBase, mnem)
     If pLastErrCode <> 0 Then HlpBranch = pLastErrCode: Exit Function
-
-    ' Use clsAddressLast so IncPC() in the execute loop lands ON the target row.
-    ' Same pattern as 8080 JMP -> SetPC(addRec.clsAddressLast).
-    Dim addrRec As clsAddrRecord
-    Set addrRec = pAddressList.GetAddr(target)
-    If Not addrRec Is Nothing Then
-        pRegs("PC") = addrRec.clsAddressLast And &HFFFF&
-    Else
-        pRegs("PC") = (target - 1) And &HFFFF&   ' fallback
-    End If
-
+    pRegs("PC") = target And &HFFFF&
     mUIRegsDirty = True
     HlpBranch = 0
 End Function
+
 '------------------------------------------------------------------------------
 ' HlpResolveAddr
 ' Resolves a label or hex address string to a decimal address.
@@ -10912,10 +10797,6 @@ Private Sub SetError(ByVal code As Long, ByVal msg As String)
     End If
 End Sub
 
-Public Sub ResetStack()
-    Set pStack = New clsDecStack
-End Sub
-
 '================================================================================
 ' END cls6510CPU
 '================================================================================
@@ -10957,7 +10838,6 @@ Public Sub Execute6510()
 
     '--- Named-range reads ---
     Dim stepMode   As Boolean: stepMode = (CLng(wsCPU.Range("Step").value) = 1)
-    Dim atEnd      As Boolean: atEnd = (CLng(wsCPU.Range("AtEnd").value) = 1)
     Dim doReset    As Boolean: doReset = (CLng(wsCPU.Range("Reset").value) = 1)
     Dim skipBreaks As Boolean: skipBreaks = (CLng(wsCPU.Range("SkipBreaks").value) = 1)
     Dim maxIters   As Long:    maxIters = CLng(wsCPU.Range("Max_Iters").value)
@@ -10999,12 +10879,6 @@ Public Sub Execute6510()
 
     '--- Reset vs continue ---
     Set myCpu = g6510
-    
-    'if at end of program auto reset
-    If atEnd Then
-        doReset = True
-        wsCPU.Range("AtEnd").value = 0
-    End If
 
     If doReset Then
         If TraceEnabled() Then TraceClear
@@ -11019,7 +10893,6 @@ Public Sub Execute6510()
         pc_dec = CLng(wsCPU.Range("Line0_dec").value)
         myCpu.SetPC pc_dec
         myCpu.SetReg "SP", &HFF              ' 6510 SP = $FF at reset
-        myCpu.ResetStack
 
         wsCPU.Range("StackStart").value = "01FF"
         wsCPU.Range("StackDetails").ClearContents
@@ -11270,8 +11143,6 @@ ExecFinalize6510:
         wsCPU.Range("Reset").value = 0
     ElseIf endedByEnd Then
         wsCPU.Range("errMessage") = "Execution Complete"
-        wsCPU.Range("AtEnd").value = 1
-        
     End If
 
 End Sub
@@ -11425,7 +11296,6 @@ Public Sub Assemble6510_ToMachine()
     Set rngMem = wsCPU.Range("MemoryTable")
 
     '--- Recalculate so Dec Line / Bytes formulas are current ----------------
-    Application.CalculateFull
     Application.Calculate
     Application.ScreenUpdating = False
 
@@ -11491,10 +11361,7 @@ Public Sub Assemble6510_ToMachine()
                 GoTo NextRow6510
 
             Case "END", "HLT", "STP"
-                 Dim endByte(0) As Variant
-                 endByte(0) = 0
-                 bytesOut = endByte
-                ' fall through to the emit block below — do NOT GoTo NextRow6510
+                GoTo NextRow6510
 
             Case "DB"
                 Dim dbVal As String

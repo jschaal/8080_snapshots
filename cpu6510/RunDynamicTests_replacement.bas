@@ -36,15 +36,28 @@ Public Sub RunDynamicTests()
     If overrideSkipBreaks Then Range("SkipBreaks") = 1
 
     ' --- Column lookups ---
-    runCol     = wsTest.Range("RunTest").Column
-    compileCol = wsTest.Range("CompileTest").Column
-    resultsCol = wsTest.Range("TestRunner").Column
+    ' runCol and compileCol live in the program area header (col M and N),
+    ' read via nameRow (the program area row returned by DiscoverAllTests).
+    runCol     = wsTest.Range("RunTest").Column      ' col M
+    compileCol = wsTest.Range("CompileTest").Column  ' col N
+    resultsCol = wsTest.Range("TestRunner").Column   ' col K
 
-    ' CPUTest column is optional - gracefully absent on older sheets
+    ' cpuCol lives in the control table (col T), read via ctrlRow.
     On Error Resume Next
     cpuCol = wsTest.Range("CPUTest").Column
     If Err.Number <> 0 Then cpuCol = 0
     On Error GoTo 0
+
+    ' --- Control table anchor for CPU column lookup only ---
+    ' nameRow from DiscoverAllTests = program area row (col A).
+    ' The CPU column is only in the control table (cols P-T).
+    ' We match testName against col P to find the control table row.
+    Dim ctrlAnchor  As Range:  Set ctrlAnchor = wsTest.Range("TestTable")
+    Dim ctrlLastRow As Long
+    ctrlLastRow = wsTest.Cells(wsTest.Rows.Count, ctrlAnchor.Column).End(xlUp).Row
+    Dim ctrlNames   As Range
+    Set ctrlNames = wsTest.Range(ctrlAnchor.Offset(1, 0), _
+                                 wsTest.Cells(ctrlLastRow, ctrlAnchor.Column))
 
     Application.ScreenUpdating = False
     Application.Calculation = xlCalculationManual
@@ -58,8 +71,9 @@ Public Sub RunDynamicTests()
     For Each t In tests
         Dim testName  As String: testName  = CStr(t(0))
         Dim testRange As Range:  Set testRange = t(1)
-        Dim nameRow   As Long:   nameRow   = CLng(t(2))
+        Dim nameRow   As Long:   nameRow   = CLng(t(2))  ' program area row
 
+        ' Run and Compile flags come from the program area header row (nameRow)
         Dim runThis As Boolean
         runThis = (val(wsTest.Cells(nameRow, runCol).value) = 1)
 
@@ -95,18 +109,24 @@ Public Sub RunDynamicTests()
 
                     If TestHasConsoleAssertions(testRange) Then ClearConsole
 
-                    ' C) Set CPU mode for this test FIRST - before compile and execute
+                    ' C) Set CPU mode BEFORE compile and execute.
+                    '    CPU column is only in the control table - look it up by name.
                     savedCPUMode = CPUMode()
-                    testCPUMode  = ""
+                    testCPUMode  = "8080"   ' safe default
                     If cpuCol > 0 Then
-                        testCPUMode = UCase$(Trim$(CStr(wsTest.Cells(nameRow, cpuCol).value)))
+                        Dim ctrlIdx As Variant
+                        ctrlIdx = Application.Match(testName, ctrlNames, 0)
+                        If Not IsError(ctrlIdx) Then
+                            Dim ctrlRow As Long
+                            ctrlRow = ctrlNames.Row + CLng(ctrlIdx) - 1
+                            Dim rawCPU As String
+                            rawCPU = UCase$(Trim$(CStr(wsTest.Cells(ctrlRow, cpuCol).value)))
+                            If rawCPU <> "" Then testCPUMode = rawCPU
+                        End If
                     End If
-                    ' Blank defaults to 8080 so existing tests without a CPU tag
-                    ' always run correctly regardless of the sheet's CPUMode cell
-                    If testCPUMode = "" Then testCPUMode = "8080"
                     wsEMU.Range("CPUMode").value = testCPUMode
 
-                    ' D) Compile if requested - uses the now-correct CPUMode
+                    ' D) Compile if requested (uses now-correct CPUMode)
                     compileThis = (val(wsTest.Cells(nameRow, compileCol).value) = 1)
                     If compileThis Then AssembleForCPUMode
 
@@ -117,10 +137,10 @@ Public Sub RunDynamicTests()
                     Application.Calculate
                     SelectEngine
 
-                    ' F) Restore CPUMode to whatever the user had selected
+                    ' F) Restore CPUMode to what user had selected
                     wsEMU.Range("CPUMode").value = savedCPUMode
 
-                    ' G) Validate
+                    ' G) Validate and record result
                     If TestValidateMultipleCriteria(testRange) Then
                         wsTest.Cells(nameRow, resultsCol).value          = "PASS"
                         wsTest.Cells(nameRow, resultsCol).Interior.Color = vbGreen
@@ -152,9 +172,9 @@ Public Sub RunDynamicTests()
     Range("consoleText") = usrForm.tbConsole.value
 
     ' --- Restore run-control flags ---
-    If overrideStepMode  Then Range("Step")       = 1
-    If overrideReset     Then Range("Reset")      = 0
-    If overrideTrace     Then Range("Trace")      = 1
+    If overrideStepMode   Then Range("Step")       = 1
+    If overrideReset      Then Range("Reset")      = 0
+    If overrideTrace      Then Range("Trace")      = 1
     If overrideSkipBreaks Then Range("SkipBreaks") = 0
 
     Dim finalMsg As String
