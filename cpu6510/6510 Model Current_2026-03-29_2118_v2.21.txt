@@ -1,5 +1,5 @@
 === VBA EXPORT: 6510 Model Current.xlsm ===
-Timestamp: 3/30/2026 7:25:07 AM
+Timestamp: 3/29/2026 9:18:38 PM
 Version: 2.21
 ================================================================================
 
@@ -414,7 +414,7 @@ Public Sub RunDynamicTests()
 
                     ' C) Set CPU mode BEFORE compile and execute.
                     '    CPU column is only in the control table - look it up by name.
-                    savedCPUMode = cpuMode()
+                    savedCPUMode = CPUMode()
                     testCPUMode = "8080"    ' safe default
                     If cpuCol > 0 Then
                         Dim ctrlIdx As Variant
@@ -5631,20 +5631,20 @@ End Sub
 ' SETUP: add a cell to the CPU sheet, name it "CPUMode", give it a dropdown:
 '   Data Validation > List > source:  8080,Z80,6510
 '------------------------------------------------------------------------------
-Public Function cpuMode() As String
+Public Function CPUMode() As String
     On Error Resume Next
     Dim v As String
     v = UCase$(Trim$(CStr(ThisWorkbook.Worksheets("CPU").Range("CPUMode").value)))
     If Err.Number <> 0 Or v = "" Then v = "8080"
     On Error GoTo 0
-    cpuMode = v
+    CPUMode = v
 End Function
 
 '------------------------------------------------------------------------------
 ' IsCPU6510  —  convenience wrapper
 '------------------------------------------------------------------------------
 Public Function IsCPU6510() As Boolean
-    IsCPU6510 = (cpuMode() = "6510")
+    IsCPU6510 = (CPUMode() = "6510")
 End Function
 
 
@@ -5771,13 +5771,13 @@ Public Function ConsoleBuffer_Text() As String
 End Function
 
 Public Sub SelectEngine()
-    Select Case cpuMode()
+    Select Case CPUMode()
         Case "6510": Execute6510   ' in decExecute6510
         Case Else:   Execute8080   ' in decExecute8080 (renamed from decAssemble)
     End Select
 End Sub
 Public Sub AssembleForCPUMode()
-    Select Case cpuMode()
+    Select Case CPUMode()
         Case "6510": Assemble6510_ToMachine
         Case Else:   Assemble8080_ToMachine
     End Select
@@ -5863,65 +5863,42 @@ End Function
 Public Function HlpGetInstructionSize( _
     ByVal mnem As String, _
     Optional ByVal op1 As String = "", _
-    Optional ByVal op2 As String = "", _
-    Optional ByVal cpuModeParam As String = "" _
+    Optional ByVal op2 As String = "" _
 ) As Long
 
     mnem = UCase$(Trim$(mnem))
     op1 = UCase$(Trim$(op1))
     op2 = UCase$(Trim$(op2))
-    Dim setCpuMode As String
-    If cpuModeParam = "" Then
-        setCpuMode = cpuMode()
-    Else
-        setCpuMode = UCase$(Trim$(cpuModeParam))
-    End If
 
     Dim size As Long
-    size = 1
+    size = 1    ' default: most instructions are 1 byte
 
     '===========================================================================
     ' 6510 PATH
+    ' Handled first so none of these mnemonics fall through to the 8080/Z80
+    ' cases below (Select Case takes the first match, so order matters).
     '===========================================================================
-    If setCpuMode = "6510" Then
+    If CPUMode() = "6510" Then
+
         Select Case mnem
 
+            ' Pseudo-ops - no bytes emitted
             Case "", "EQU", "ORG"
                 size = 0
 
             Case "END", "HLT", "STP"
                 size = 1
 
+            ' DB: count chars in the string literal + 1 null terminator,
+            '     or count comma-separated byte tokens
             Case "DB"
-                Dim szDB As Long: szDB = 0
-                Dim pDB  As Long: pDB = 1
-                Dim sDB  As String: sDB = Trim$(op1)
-                Do While pDB <= Len(sDB)
-                    Do While pDB <= Len(sDB) And _
-                            (Mid$(sDB, pDB, 1) = "," Or Mid$(sDB, pDB, 1) = " ")
-                        pDB = pDB + 1
-                    Loop
-                    If pDB > Len(sDB) Then Exit Do
-                    If Mid$(sDB, pDB, 1) = Chr$(34) Or Mid$(sDB, pDB, 1) = "'" Then
-                        Dim qqDB As String: qqDB = Mid$(sDB, pDB, 1)
-                        pDB = pDB + 1
-                        Do While pDB <= Len(sDB) And Mid$(sDB, pDB, 1) <> qqDB
-                            szDB = szDB + 1
-                            pDB = pDB + 1
-                        Loop
-                        pDB = pDB + 1
-                    Else
-                        szDB = szDB + 1
-                        Dim cpDB As Long: cpDB = InStr(pDB, sDB, ",")
-                        If cpDB > 0 Then
-                            pDB = cpDB + 1
-                        Else
-                            Exit Do
-                        End If
-                    End If
-                Loop
-                size = IIf(szDB = 0, 1, szDB)
+                If Left$(op1, 1) = Chr$(34) Or Left$(op1, 1) = "'" Then
+                    size = Len(op1) - 1  ' strip 2 quotes, add 1 null = Len-1
+                Else
+                    size = UBound(Split(op1, ",")) - LBound(Split(op1, ",")) + 1
+                End If
 
+            ' DS: reserve n bytes (op1 is hex or decimal count)
             Case "DS"
                 If usrValIsHexString(op1) Then
                     size = usrHexToDec(op1)
@@ -5931,17 +5908,25 @@ Public Function HlpGetInstructionSize( _
                     size = 0
                 End If
 
+            ' All 6510 instructions: size determined by addressing mode in op1
             Case "ADC", "AND", "ASL", "BIT", "CMP", "CPX", "CPY", _
                  "DEC", "EOR", "INC", "LDA", "LDX", "LDY", _
                  "LSR", "ORA", "ROL", "ROR", "SBC", "STA", "STX", "STY"
                 size = Hlp6510InstrSize(op1)
 
+            ' Branches: always 2 bytes (opcode + signed offset)
             Case "BCC", "BCS", "BEQ", "BMI", "BNE", "BPL", "BVC", "BVS"
                 size = 2
 
-            Case "JSR", "JMP"
+            ' JSR: always 3 bytes (opcode + 16-bit address)
+            Case "JSR"
                 size = 3
 
+            ' JMP: always 3 bytes (absolute or indirect, both 3 on 6510)
+            Case "JMP"
+                size = 3
+
+            ' All implied / accumulator 6510 instructions: 1 byte
             Case "BRK", "CLC", "CLD", "CLI", "CLV", "DEX", "DEY", _
                  "INX", "INY", "NOP", "PHA", "PHP", "PLA", "PLP", _
                  "RTI", "RTS", "SEC", "SED", "SEI", _
@@ -5949,7 +5934,7 @@ Public Function HlpGetInstructionSize( _
                 size = 1
 
             Case Else
-                size = 1
+                size = 1    ' unknown 6510 mnemonic - safe default
 
         End Select
 
@@ -5959,51 +5944,63 @@ Public Function HlpGetInstructionSize( _
     End If
 
     '===========================================================================
-    ' 8080 / Z80 PATH  (unchanged)
+    ' 8080 / Z80 PATH  (unchanged from original)
     '===========================================================================
     Select Case mnem
 
+        ' Pseudo-ops / no code emitted
         Case "", "EQU"
             size = 0
 
         Case "DB"
-            size = Len(op1)
+            size = Len(op1)   ' string payload already validated elsewhere
 
+        ' 16-bit immediate
         Case "LXI", "JMP", "JC", "JNC", "JZ", "JNZ", _
              "JM", "JPE", "JPO", "CALL", "LDA", "STA", _
              "LHLD", "SHLD"
             size = 3
 
+        ' 16-bit Calls to Address (8080)
         Case "CC", "CM", "CNC", "CNZ", "CPE", "CPO", "CZ"
             size = 3
 
+        ' 8-bit immediate
         Case "MVI", "ADI", "ACI", "ANI", "ORI", "XRI", _
              "CPI", "SUI", "SBI", "IN", "OUT", "PRI"
             size = 2
 
+        ' Relative jumps (Z80)
         Case "JR", "DJNZ"
             size = 2
 
+        ' BIT / SET / RES (Z80 CB-prefixed)
         Case "BIT", "SET", "RES"
             size = 2
 
+        ' LD family (needs operand inspection)
         Case "LD"
             size = HlpSizeLD(op1, op2)
 
+        ' New Z80 operations
         Case "AND"
             size = HlpSizeZ80Enhanced(mnem, op1, op2)
 
+        ' Block operations
         Case "CPD", "CPDR", "CPIR", "IND", "INDR", "INI", "INIR", _
              "LDD", "LDDR", "LDI", "LDIR", "OTDR", "OTIR", "OUTD", "OUTI"
             size = 2
 
+        ' Z80 Shift / Negate / Bit
         Case "NEG", "RETI", "RETN", "RL", "RLD", "RR", "RRD", _
              "SLA", "SLR", "SRA", "SRL"
             size = 2
 
+        ' Interrupt mode
         Case "IM"
             size = 2
 
+        ' OR unification
         Case "OR"
             If usrIsRegister08Bit(op1) And (op2 = "(HL)" Or usrIsRegister08Bit(op2)) Then
                 size = 1
@@ -6013,6 +6010,7 @@ Public Function HlpGetInstructionSize( _
                 size = 4
             End If
 
+        ' Enhanced Z80 versions of 8080 opcodes
         Case "CPI"
             size = 2
 
@@ -6049,6 +6047,7 @@ Public Function HlpGetInstructionSize( _
                 size = 2
             End If
 
+        ' All others (register-register, implied)
         Case Else
             size = 1
 
@@ -6057,6 +6056,7 @@ Public Function HlpGetInstructionSize( _
     HlpGetInstructionSize = size
 
 End Function
+
 ' --- Required Helpers ---
 Private Function HlpSizeZ80Enhanced(opcode As String, op1 As String, op2 As String) As Long
     Dim size As Long: size = 0

@@ -1,6 +1,6 @@
 === VBA EXPORT: 6510 Model Current.xlsm ===
-Timestamp: 3/30/2026 7:25:07 AM
-Version: 2.21
+Timestamp: 3/28/2026 9:07:44 PM
+Version: 2.16
 ================================================================================
 
 ''' Component: ThisWorkbook
@@ -339,28 +339,15 @@ Public Sub RunDynamicTests()
     If overrideSkipBreaks Then Range("SkipBreaks") = 1
 
     ' --- Column lookups ---
-    ' runCol and compileCol live in the program area header (col M and N),
-    ' read via nameRow (the program area row returned by DiscoverAllTests).
-    runCol = wsTest.Range("RunTest").Column          ' col M
-    compileCol = wsTest.Range("CompileTest").Column  ' col N
-    resultsCol = wsTest.Range("TestRunner").Column   ' col K
+    runCol = wsTest.Range("RunTest").Column
+    compileCol = wsTest.Range("CompileTest").Column
+    resultsCol = wsTest.Range("TestRunner").Column
 
-    ' cpuCol lives in the control table (col T), read via ctrlRow.
+    ' CPUTest column is optional - gracefully absent on older sheets
     On Error Resume Next
     cpuCol = wsTest.Range("CPUTest").Column
     If Err.Number <> 0 Then cpuCol = 0
     On Error GoTo 0
-
-    ' --- Control table anchor for CPU column lookup only ---
-    ' nameRow from DiscoverAllTests = program area row (col A).
-    ' The CPU column is only in the control table (cols P-T).
-    ' We match testName against col P to find the control table row.
-    Dim ctrlAnchor  As Range:  Set ctrlAnchor = wsTest.Range("TestTable")
-    Dim ctrlLastRow As Long
-    ctrlLastRow = wsTest.Cells(wsTest.Rows.Count, ctrlAnchor.Column).End(xlUp).row
-    Dim ctrlNames   As Range
-    Set ctrlNames = wsTest.Range(ctrlAnchor.offset(1, 0), _
-                                 wsTest.Cells(ctrlLastRow, ctrlAnchor.Column))
 
     Application.ScreenUpdating = False
     Application.Calculation = xlCalculationManual
@@ -374,9 +361,8 @@ Public Sub RunDynamicTests()
     For Each t In tests
         Dim testName  As String: testName = CStr(t(0))
         Dim testRange As Range:  Set testRange = t(1)
-        Dim nameRow   As Long:   nameRow = CLng(t(2))    ' program area row
+        Dim nameRow   As Long:   nameRow = CLng(t(2))
 
-        ' Run and Compile flags come from the program area header row (nameRow)
         Dim runThis As Boolean
         runThis = (val(wsTest.Cells(nameRow, runCol).value) = 1)
 
@@ -412,24 +398,18 @@ Public Sub RunDynamicTests()
 
                     If TestHasConsoleAssertions(testRange) Then ClearConsole
 
-                    ' C) Set CPU mode BEFORE compile and execute.
-                    '    CPU column is only in the control table - look it up by name.
-                    savedCPUMode = cpuMode()
-                    testCPUMode = "8080"    ' safe default
+                    ' C) Set CPU mode for this test FIRST - before compile and execute
+                    savedCPUMode = CPUMode()
+                    testCPUMode = ""
                     If cpuCol > 0 Then
-                        Dim ctrlIdx As Variant
-                        ctrlIdx = Application.Match(testName, ctrlNames, 0)
-                        If Not IsError(ctrlIdx) Then
-                            Dim ctrlRow As Long
-                            ctrlRow = ctrlNames.row + CLng(ctrlIdx) - 1
-                            Dim rawCPU As String
-                            rawCPU = UCase$(Trim$(CStr(wsTest.Cells(ctrlRow, cpuCol).value)))
-                            If rawCPU <> "" Then testCPUMode = rawCPU
-                        End If
+                        testCPUMode = UCase$(Trim$(CStr(wsTest.Cells(nameRow, cpuCol).value)))
                     End If
+                    ' Blank defaults to 8080 so existing tests without a CPU tag
+                    ' always run correctly regardless of the sheet's CPUMode cell
+                    If testCPUMode = "" Then testCPUMode = "8080"
                     wsEMU.Range("CPUMode").value = testCPUMode
 
-                    ' D) Compile if requested (uses now-correct CPUMode)
+                    ' D) Compile if requested - uses the now-correct CPUMode
                     compileThis = (val(wsTest.Cells(nameRow, compileCol).value) = 1)
                     If compileThis Then AssembleForCPUMode
 
@@ -440,10 +420,10 @@ Public Sub RunDynamicTests()
                     Application.Calculate
                     SelectEngine
 
-                    ' F) Restore CPUMode to what user had selected
+                    ' F) Restore CPUMode to whatever the user had selected
                     wsEMU.Range("CPUMode").value = savedCPUMode
 
-                    ' G) Validate and record result
+                    ' G) Validate
                     If TestValidateMultipleCriteria(testRange) Then
                         wsTest.Cells(nameRow, resultsCol).value = "PASS"
                         wsTest.Cells(nameRow, resultsCol).Interior.Color = vbGreen
@@ -5547,7 +5527,8 @@ Public Const ERR_BAD_OPCODE As Long = -9999
 Public Const ERR_MAX_ITERS As Long = -9998
 Public Const ERR_STOP As Long = -9997
 
-Public gMemHighWater As Long   ' highest address written by last compile; 0 = unknown
+Public g6510KernalTraps As Object   ' key = Long address, value = String handler name
+
 '------------------------------------------------------------------------------
 ' gCPU
 ' Returns the shared CPU instance, creating it if necessary.
@@ -5565,7 +5546,6 @@ End Property
 '------------------------------------------------------------------------------
 Public Sub usrMemReset()
     Set pMemory = Nothing
-    gMemHighWater = 0
 End Sub
 '------------------------------------------------------------------------------
 ' gCPU
@@ -5631,20 +5611,20 @@ End Sub
 ' SETUP: add a cell to the CPU sheet, name it "CPUMode", give it a dropdown:
 '   Data Validation > List > source:  8080,Z80,6510
 '------------------------------------------------------------------------------
-Public Function cpuMode() As String
+Public Function CPUMode() As String
     On Error Resume Next
     Dim v As String
     v = UCase$(Trim$(CStr(ThisWorkbook.Worksheets("CPU").Range("CPUMode").value)))
     If Err.Number <> 0 Or v = "" Then v = "8080"
     On Error GoTo 0
-    cpuMode = v
+    CPUMode = v
 End Function
 
 '------------------------------------------------------------------------------
 ' IsCPU6510  —  convenience wrapper
 '------------------------------------------------------------------------------
 Public Function IsCPU6510() As Boolean
-    IsCPU6510 = (cpuMode() = "6510")
+    IsCPU6510 = (CPUMode() = "6510")
 End Function
 
 
@@ -5771,13 +5751,13 @@ Public Function ConsoleBuffer_Text() As String
 End Function
 
 Public Sub SelectEngine()
-    Select Case cpuMode()
+    Select Case CPUMode()
         Case "6510": Execute6510   ' in decExecute6510
         Case Else:   Execute8080   ' in decExecute8080 (renamed from decAssemble)
     End Select
 End Sub
 Public Sub AssembleForCPUMode()
-    Select Case cpuMode()
+    Select Case CPUMode()
         Case "6510": Assemble6510_ToMachine
         Case Else:   Assemble8080_ToMachine
     End Select
@@ -5863,65 +5843,42 @@ End Function
 Public Function HlpGetInstructionSize( _
     ByVal mnem As String, _
     Optional ByVal op1 As String = "", _
-    Optional ByVal op2 As String = "", _
-    Optional ByVal cpuModeParam As String = "" _
+    Optional ByVal op2 As String = "" _
 ) As Long
 
     mnem = UCase$(Trim$(mnem))
     op1 = UCase$(Trim$(op1))
     op2 = UCase$(Trim$(op2))
-    Dim setCpuMode As String
-    If cpuModeParam = "" Then
-        setCpuMode = cpuMode()
-    Else
-        setCpuMode = UCase$(Trim$(cpuModeParam))
-    End If
 
     Dim size As Long
-    size = 1
+    size = 1    ' default: most instructions are 1 byte
 
     '===========================================================================
     ' 6510 PATH
+    ' Handled first so none of these mnemonics fall through to the 8080/Z80
+    ' cases below (Select Case takes the first match, so order matters).
     '===========================================================================
-    If setCpuMode = "6510" Then
+    If CPUMode() = "6510" Then
+
         Select Case mnem
 
+            ' Pseudo-ops - no bytes emitted
             Case "", "EQU", "ORG"
                 size = 0
 
             Case "END", "HLT", "STP"
-                size = 1
+                size = 0
 
+            ' DB: count chars in the string literal + 1 null terminator,
+            '     or count comma-separated byte tokens
             Case "DB"
-                Dim szDB As Long: szDB = 0
-                Dim pDB  As Long: pDB = 1
-                Dim sDB  As String: sDB = Trim$(op1)
-                Do While pDB <= Len(sDB)
-                    Do While pDB <= Len(sDB) And _
-                            (Mid$(sDB, pDB, 1) = "," Or Mid$(sDB, pDB, 1) = " ")
-                        pDB = pDB + 1
-                    Loop
-                    If pDB > Len(sDB) Then Exit Do
-                    If Mid$(sDB, pDB, 1) = Chr$(34) Or Mid$(sDB, pDB, 1) = "'" Then
-                        Dim qqDB As String: qqDB = Mid$(sDB, pDB, 1)
-                        pDB = pDB + 1
-                        Do While pDB <= Len(sDB) And Mid$(sDB, pDB, 1) <> qqDB
-                            szDB = szDB + 1
-                            pDB = pDB + 1
-                        Loop
-                        pDB = pDB + 1
-                    Else
-                        szDB = szDB + 1
-                        Dim cpDB As Long: cpDB = InStr(pDB, sDB, ",")
-                        If cpDB > 0 Then
-                            pDB = cpDB + 1
-                        Else
-                            Exit Do
-                        End If
-                    End If
-                Loop
-                size = IIf(szDB = 0, 1, szDB)
+                If Left$(op1, 1) = Chr$(34) Or Left$(op1, 1) = "'" Then
+                    size = Len(op1) - 1  ' strip 2 quotes, add 1 null = Len-1
+                Else
+                    size = UBound(Split(op1, ",")) - LBound(Split(op1, ",")) + 1
+                End If
 
+            ' DS: reserve n bytes (op1 is hex or decimal count)
             Case "DS"
                 If usrValIsHexString(op1) Then
                     size = usrHexToDec(op1)
@@ -5931,17 +5888,25 @@ Public Function HlpGetInstructionSize( _
                     size = 0
                 End If
 
+            ' All 6510 instructions: size determined by addressing mode in op1
             Case "ADC", "AND", "ASL", "BIT", "CMP", "CPX", "CPY", _
                  "DEC", "EOR", "INC", "LDA", "LDX", "LDY", _
                  "LSR", "ORA", "ROL", "ROR", "SBC", "STA", "STX", "STY"
                 size = Hlp6510InstrSize(op1)
 
+            ' Branches: always 2 bytes (opcode + signed offset)
             Case "BCC", "BCS", "BEQ", "BMI", "BNE", "BPL", "BVC", "BVS"
                 size = 2
 
-            Case "JSR", "JMP"
+            ' JSR: always 3 bytes (opcode + 16-bit address)
+            Case "JSR"
                 size = 3
 
+            ' JMP: always 3 bytes (absolute or indirect, both 3 on 6510)
+            Case "JMP"
+                size = 3
+
+            ' All implied / accumulator 6510 instructions: 1 byte
             Case "BRK", "CLC", "CLD", "CLI", "CLV", "DEX", "DEY", _
                  "INX", "INY", "NOP", "PHA", "PHP", "PLA", "PLP", _
                  "RTI", "RTS", "SEC", "SED", "SEI", _
@@ -5949,7 +5914,7 @@ Public Function HlpGetInstructionSize( _
                 size = 1
 
             Case Else
-                size = 1
+                size = 1    ' unknown 6510 mnemonic - safe default
 
         End Select
 
@@ -5959,51 +5924,63 @@ Public Function HlpGetInstructionSize( _
     End If
 
     '===========================================================================
-    ' 8080 / Z80 PATH  (unchanged)
+    ' 8080 / Z80 PATH  (unchanged from original)
     '===========================================================================
     Select Case mnem
 
+        ' Pseudo-ops / no code emitted
         Case "", "EQU"
             size = 0
 
         Case "DB"
-            size = Len(op1)
+            size = Len(op1)   ' string payload already validated elsewhere
 
+        ' 16-bit immediate
         Case "LXI", "JMP", "JC", "JNC", "JZ", "JNZ", _
              "JM", "JPE", "JPO", "CALL", "LDA", "STA", _
              "LHLD", "SHLD"
             size = 3
 
+        ' 16-bit Calls to Address (8080)
         Case "CC", "CM", "CNC", "CNZ", "CPE", "CPO", "CZ"
             size = 3
 
+        ' 8-bit immediate
         Case "MVI", "ADI", "ACI", "ANI", "ORI", "XRI", _
              "CPI", "SUI", "SBI", "IN", "OUT", "PRI"
             size = 2
 
+        ' Relative jumps (Z80)
         Case "JR", "DJNZ"
             size = 2
 
+        ' BIT / SET / RES (Z80 CB-prefixed)
         Case "BIT", "SET", "RES"
             size = 2
 
+        ' LD family (needs operand inspection)
         Case "LD"
             size = HlpSizeLD(op1, op2)
 
+        ' New Z80 operations
         Case "AND"
             size = HlpSizeZ80Enhanced(mnem, op1, op2)
 
+        ' Block operations
         Case "CPD", "CPDR", "CPIR", "IND", "INDR", "INI", "INIR", _
              "LDD", "LDDR", "LDI", "LDIR", "OTDR", "OTIR", "OUTD", "OUTI"
             size = 2
 
+        ' Z80 Shift / Negate / Bit
         Case "NEG", "RETI", "RETN", "RL", "RLD", "RR", "RRD", _
              "SLA", "SLR", "SRA", "SRL"
             size = 2
 
+        ' Interrupt mode
         Case "IM"
             size = 2
 
+        ' OR unification
         Case "OR"
             If usrIsRegister08Bit(op1) And (op2 = "(HL)" Or usrIsRegister08Bit(op2)) Then
                 size = 1
@@ -6013,6 +5990,7 @@ Public Function HlpGetInstructionSize( _
                 size = 4
             End If
 
+        ' Enhanced Z80 versions of 8080 opcodes
         Case "CPI"
             size = 2
 
@@ -6049,6 +6027,7 @@ Public Function HlpGetInstructionSize( _
                 size = 2
             End If
 
+        ' All others (register-register, implied)
         Case Else
             size = 1
 
@@ -6057,6 +6036,7 @@ Public Function HlpGetInstructionSize( _
     HlpGetInstructionSize = size
 
 End Function
+
 ' --- Required Helpers ---
 Private Function HlpSizeZ80Enhanced(opcode As String, op1 As String, op2 As String) As Long
     Dim size As Long: size = 0
@@ -6501,7 +6481,7 @@ Public Sub RefreshMemoryTable()
 
     Const BYTES_PER_ROW As Long = 8
 
-    ' 1. Worksheet & anchors
+    ' ?? 1. Worksheet & anchors ????????????????????????????????????????????????
     Dim ws As Worksheet
     Set ws = ThisWorkbook.Worksheets("CPU")
 
@@ -6511,7 +6491,7 @@ Public Sub RefreshMemoryTable()
     Set addrAnchor = ws.Range("MemoryTableAddress")
     Set memAnchor = ws.Range("MemoryTable")
 
-    ' 2. Memory window
+    ' ?? 2. Memory window ??????????????????????????????????????????????????????
     Dim memStart As Long
     Dim memEnd   As Long
     memStart = usrHexToDec(CStr(ws.Range("MemStart").value))
@@ -6531,23 +6511,20 @@ Public Sub RefreshMemoryTable()
     totalRows = ((memEnd - memStart) \ BYTES_PER_ROW) + 1
     If totalRows > memAnchor.Rows.Count Then totalRows = memAnchor.Rows.Count
 
-    ' 3. Pre-build hex lookup: 0-255 -> "00".."FF"
+    ' ?? 3. Pre-build hex lookup: 0-255 -> "00".."FF" ?????????????????????????
     Dim hexLookup(0 To 255) As String
     Dim h As Integer
     For h = 0 To 255
         hexLookup(h) = Right$("00" & Hex$(h), 2)
     Next h
 
-    ' 4. Allocate arrays
+    ' ?? 4. Allocate arrays ????????????????????????????????????????????????????
     Dim addrArr() As Variant
     Dim byteArr() As Variant
     ReDim addrArr(1 To totalRows, 1 To 1)
     ReDim byteArr(1 To totalRows, 1 To BYTES_PER_ROW)
 
-    ' 5. Fill arrays
-    '    Cells beyond gMemHighWater are left as "" (blank) so that only
-    '    bytes actually emitted by the compiler are displayed — identical
-    '    to the 8080 behaviour where trailing zero-memory rows are hidden.
+    ' ?? 5. Fill arrays in RAM ?????????????????????????????????????????????????
     Dim rowIdx  As Long
     Dim colByte As Long
     Dim rowAddr As Long
@@ -6558,29 +6535,22 @@ Public Sub RefreshMemoryTable()
 
     For rowIdx = 1 To totalRows
 
-        ' Address column: blank the row if it starts beyond the high-water mark
-        If gMemHighWater > 0 And rowAddr > gMemHighWater Then
-            addrArr(rowIdx, 1) = ""
-        Else
-            addrArr(rowIdx, 1) = rowAddr
-        End If
+        addrArr(rowIdx, 1) = rowAddr
 
         For colByte = 0 To BYTES_PER_ROW - 1
             curAddr = rowAddr + colByte
-            If curAddr > memEnd Then
-                byteArr(rowIdx, colByte + 1) = ""
-            ElseIf gMemHighWater > 0 And curAddr > gMemHighWater Then
-                byteArr(rowIdx, colByte + 1) = ""   ' beyond last compiled byte
-            Else
+            If curAddr <= memEnd Then
                 b = CLng(gMemory.addr(curAddr)) And &HFF&
                 byteArr(rowIdx, colByte + 1) = hexLookup(b)
+            Else
+                byteArr(rowIdx, colByte + 1) = ""
             End If
         Next colByte
 
         rowAddr = rowAddr + BYTES_PER_ROW
     Next rowIdx
 
-    ' 6. Two bulk writes — address col, then byte cols
+    ' ?? 6. Two bulk writes — address col, then byte cols ?????????????????????
     Application.ScreenUpdating = False
 
     addrAnchor.Resize(totalRows, 1).value = addrArr
@@ -6590,6 +6560,20 @@ Public Sub RefreshMemoryTable()
 
 End Sub
 
+Public Sub Init6510KernalTraps()
+    If Not g6510KernalTraps Is Nothing Then Exit Sub
+    Set g6510KernalTraps = CreateObject("Scripting.Dictionary")
+    ' C64 KERNAL vectors
+    g6510KernalTraps.ADD &HFFD2&, "CHROUT"   ' Output char in A to current channel
+    g6510KernalTraps.ADD &HFFE4&, "GETIN"    ' Read key from keyboard buffer ? A
+    g6510KernalTraps.ADD &HFFCF&, "CHRIN"    ' Input char from current channel ? A
+    g6510KernalTraps.ADD &HFF90&, "SETMSG"   ' Control KERNAL messages
+    g6510KernalTraps.ADD &HFFC0&, "OPEN"     ' Open a logical file
+    g6510KernalTraps.ADD &HFFC3&, "CLOSE"    ' Close a logical file
+    g6510KernalTraps.ADD &HFFB1&, "CLRCHN"   ' Reset I/O channels to defaults
+    g6510KernalTraps.ADD &HFF9F&, "LISTEN"   ' Make device listen
+    g6510KernalTraps.ADD &HFFE1&, "STOP"     ' Check STOP key ? Z flag
+End Sub
 '================================================================================
 ' Module:       modGlobals
 '================================================================================
@@ -6761,7 +6745,7 @@ Public Sub Execute8080()
     Dim opcode As String
     Dim op1 As String, op2 As String, label As String
     Dim ofs_opcode As Long, ofs_op1 As Long, ofs_op2 As Long, ofs_rowstat As Long, ofs_label As Long
-    Dim reset As Long, errcode As Long
+    Dim Reset As Long, errcode As Long
     Dim rowStat As String
     Dim memStart As Long, memEnd As Long
     Dim myCpu As clsDecCPU
@@ -6801,18 +6785,11 @@ Public Sub Execute8080()
 
     debugMode = (Range("Debug").value = 1)
     stepMode = (Range("Step").value = 1)
-    reset = Range("Reset").value
+    Reset = Range("Reset").value
     skipBreaks = Range("SkipBreaks") = 1
     traceReads = TraceMemReads()
     maxIters = Range("Max_Iters").value
     Range("Stop").value = 0
-    
-    Dim atEnd As Boolean: atEnd = CLng(Range("AtEnd").value) = 1
-    'if at end of program auto reset
-    If atEnd Then
-        reset = 1
-        Range("AtEnd").value = 0
-    End If
 
     errcode = 0
     endedByEnd = False
@@ -6823,7 +6800,7 @@ Public Sub Execute8080()
     Range("errMessage").value = ""
 
     ' check first and only first line for an org opcode to set global memory location
-    If Range("Line0").offset(0, ofs_opcode) = "ORG" And reset = 1 Then
+    If Range("Line0").offset(0, ofs_opcode) = "ORG" And Reset = 1 Then
         op1 = Range("Line0").offset(0, ofs_op1).value
         If usrValIsHexString(op1) Then
             Range("MemStart").value = op1
@@ -6837,7 +6814,7 @@ Public Sub Execute8080()
     Set myCpu = gDecCPU                                         ' persistent CPU instance
 
     ' ========= Reset / continuation =========
-    If reset = 1 Then
+    If Reset = 1 Then
         ' Fresh run / Step Start: reset CPU and rebuild cache
         If TraceEnabled() Then TraceClear
         ForceCompile (False)
@@ -7256,7 +7233,6 @@ ExecFinalize:
         Range("errMessage") = "Break at Line " & pc_dec
         Range("Reset").value = 0
     ElseIf endedByEnd Then
-        Range("AtEnd").value = 1
         Range("errMessage") = "Execution Complete"
     End If
 End Sub
@@ -7566,7 +7542,7 @@ Public Sub EmitBytesToMemoryTable(ByVal wsCPU As Worksheet, _
  ByVal bytesOut As Variant, _
  ByRef myMem As clsMemory, _
  Optional ByVal addrCol As Long = 0)
-
+ 
     Dim i As Long
     Dim baseAddr As Long
     Dim lastTargetRow As Long
@@ -7597,9 +7573,6 @@ Public Sub EmitBytesToMemoryTable(ByVal wsCPU As Worksheet, _
         rngMem.Cells(targetRow, targetCol).value = Right$("00" & Hex$(CLng(bytesOut(i)) And &HFF&), 2)
         myMem.addr(addr) = CLng(bytesOut(i)) And &HFF&
 
-        ' Track the highest address written so RefreshMemoryTable can blank the rest
-        If addr > gMemHighWater Then gMemHighWater = addr
-
         baseAddr = memStartDec + (rowIndex * BYTES_PER_MEMROW)
         lastTargetRow = targetRow
     Next i
@@ -7610,6 +7583,7 @@ Public Sub EmitBytesToMemoryTable(ByVal wsCPU As Worksheet, _
     End If
 
 End Sub
+
 ' =============================================================================
 ' Opcode map from "8080 Op to Hex" table: key = MNEMONIC|OP1SPEC|OP2SPEC
 ' =============================================================================
@@ -9597,15 +9571,15 @@ Private Sub Class_Initialize()
     pRegs.ADD "PC", 0
     pRegs.ADD "SP", &HFF         ' points to top of stack page; wraps in $01xx
 
-    ' excel does not like 1 character range names so register names are written out and reused from 8080 GUI
     Set pFlags = CreateObject("Scripting.Dictionary")
-    pFlags.ADD "N", 0            ' Negative (N)
-    pFlags.ADD "V", 0            ' oVerflow (V)
-    pFlags.ADD "B", 0            ' Break (B)
-    pFlags.ADD "D", 0            ' Decimal (D)
-    pFlags.ADD "I", 1            ' Interrupt disable (set on reset) (I)
-    pFlags.ADD "Z", 0            ' Zero (Z)
-    pFlags.ADD "C", 0            ' Carry (C)
+    'reuse 8080 registers when possible for UI simplicity
+    pFlags.ADD "Negative", 0     ' Negative (N)
+    pFlags.ADD "OverFlow", 0            ' oVerflow (V)
+    pFlags.ADD "Break", 0            ' Break (B)
+    pFlags.ADD "Decimal", 0            ' Decimal(D)
+    pFlags.ADD "Interrupt", 1            ' Interrupt disable (set on reset) (I)
+    pFlags.ADD "Zero", 0
+    pFlags.ADD "Carry", 0
 
     Set pAddressList = gAddressList
     Set pMemory = gMemory
@@ -10253,120 +10227,49 @@ Public Function JMP(ByVal op1 As String) As Long
         target = HlpResolveAddr(op1, 600, "JMP")
         If pLastErrCode <> 0 Then JMP = pLastErrCode: Exit Function
     End If
-
-    ' Set PC to clsAddressLast of target so IncPC() in the execute loop
-    ' advances INTO the target row (mirrors 8080 JMP/CALL_ pattern exactly).
-    Dim addrRec As clsAddrRecord
-    Set addrRec = pAddressList.GetAddr(target)
-    If Not addrRec Is Nothing Then
-        pRegs("PC") = addrRec.clsAddressLast And &HFFFF&
-    Else
-        pRegs("PC") = (target - 1) And &HFFFF&   ' fallback: target not in address list
-    End If
-
+    pRegs("PC") = target And &HFFFF&
     mUIRegsDirty = True
     JMP = 0
 End Function
+
 ' ------------------------------------------------------------------------------
 ' JSR  Jump to Subroutine
 ' Pushes (PC - 1) onto stack (address of last byte of JSR instruction).
 ' In the row-based model "PC" at call time == address of JSR row, so we
 ' push (PC) and RTS adds 1 — net effect is identical to hardware.
+' ------------------------------------------------------------------------------
 Public Function JSR(ByVal op1 As String) As Long
     Dim target As Long
     target = HlpResolveAddr(op1, 610, "JSR")
     If pLastErrCode <> 0 Then JSR = pLastErrCode: Exit Function
 
-    ' Compute return address = clsAddressNext of the JSR row.
-    ' RTS will look this up via clsAddressLast so IncPC() lands on it.
+    ' Push current PC (return address - 1 matches hardware; RTS adds 1)
     Dim retAddr As Long
-    Dim jsrRec As clsAddrRecord
-    Set jsrRec = pAddressList.GetAddr(pRegs("PC"))
-    If Not jsrRec Is Nothing Then
-        retAddr = jsrRec.clsAddressNext And &HFFFF&
-    Else
-        retAddr = (pRegs("PC") + 3) And &HFFFF&    ' fallback: JSR is 3 bytes
-    End If
+    retAddr = pRegs("PC") And &HFFFF&
+    HlpStackPush CByte((retAddr \ 256) And 255)   ' high byte first
+    HlpStackPush CByte(retAddr And 255)            ' low byte
 
-    ' Push high byte then low byte onto pStack (mirrors 8080 CALL_).
-    ' pStack.clsPUSH writes the byte to pMemory AND records it for ShowStack display.
-    Dim sp As Long
-    sp = pRegs("SP") And 255
-    Dim label As String: label = "JSR " & op1
-
-    sp = (sp - 1) And 255
-    pStack.clsPUSH &H100& + sp, (retAddr \ 256) And 255, label   ' high byte
-
-    sp = (sp - 1) And 255
-    pStack.clsPUSH &H100& + sp, retAddr And 255, label            ' low byte
-
-    pRegs("SP") = sp
-    mUIStackDirty = True
-
-    ' Set PC to clsAddressLast of target so IncPC() advances INTO the subroutine.
-    Dim targetRec As clsAddrRecord
-    Set targetRec = pAddressList.GetAddr(target)
-    If Not targetRec Is Nothing Then
-        pRegs("PC") = targetRec.clsAddressLast And &HFFFF&
-    Else
-        pRegs("PC") = (target - 1) And &HFFFF&     ' fallback
-    End If
-
+    pRegs("PC") = target And &HFFFF&
     mUIRegsDirty = True
+    mUIStackDirty = True
     JSR = 0
 End Function
+
 ' ------------------------------------------------------------------------------
 ' RTS  Return from Subroutine
 ' Pops 16-bit address (low then high) and adds 1.
 ' ------------------------------------------------------------------------------
 Public Function RTS() As Long
-    If pStack.Count = 0 Then
-        SetError 620, "RTS: Stack underflow"
-        RTS = 620
-        Exit Function
-    End If
-
-    ' Validate top of stack was pushed by JSR
-    Dim peek As clsDecRegisterState
-    Set peek = pStack.clsPeek
-    If Left$(peek.RegisterName, 3) <> "JSR" Then
-        SetError 621, "RTS: Top of stack not from JSR: " & peek.RegisterName
-        RTS = 621
-        Exit Function
-    End If
-
-    ' Pop low byte then high byte (mirrors 8080 RET exactly)
-    Dim sp As Long
-    sp = pRegs("SP") And 255
-
-    Dim loRec As clsDecRegisterState
-    Set loRec = pStack.clsPOP
-    sp = (sp + 1) And 255
-    Dim lo As Long: lo = loRec.value
-
-    Dim hiRec As clsDecRegisterState
-    Set hiRec = pStack.clsPOP
-    sp = (sp + 1) And 255
-    Dim hi As Long: hi = hiRec.value
-
-    pRegs("SP") = sp
-    mUIStackDirty = True
-
-    ' Return to exact address from stack; use clsAddressLast so IncPC() lands on it
-    Dim retAddr As Long
-    retAddr = (hi * 256&) Or lo
-
-    Dim addrRec As clsAddrRecord
-    Set addrRec = pAddressList.GetAddr(retAddr)
-    If Not addrRec Is Nothing Then
-        pRegs("PC") = addrRec.clsAddressLast And &HFFFF&
-    Else
-        pRegs("PC") = (retAddr - 1) And &HFFFF&    ' fallback
-    End If
-
+    Dim lo As Long, hi As Long
+    lo = CLng(HlpStackPull())
+    hi = CLng(HlpStackPull())
+    pRegs("PC") = ((hi * 256&) Or lo) + 1
+    pRegs("PC") = pRegs("PC") And &HFFFF&
     mUIRegsDirty = True
+    mUIStackDirty = True
     RTS = 0
 End Function
+
 ' ------------------------------------------------------------------------------
 ' RTI  Return from Interrupt
 ' Pops SR (flags), then low byte of PC, then high byte of PC.
@@ -10374,30 +10277,17 @@ End Function
 ' ------------------------------------------------------------------------------
 Public Function RTI() As Long
     Dim sr As Byte, lo As Long, hi As Long
-
     sr = HlpStackPull()
     HlpFlagUnpack sr
-
     lo = CLng(HlpStackPull())
     hi = CLng(HlpStackPull())
-
-    Dim retAddr As Long
-    retAddr = (hi * 256&) Or lo
-
-    ' Use clsAddressLast so IncPC() lands on retAddr (mirrors RTS pattern).
-    Dim addrRec As clsAddrRecord
-    Set addrRec = pAddressList.GetAddr(retAddr)
-    If Not addrRec Is Nothing Then
-        pRegs("PC") = addrRec.clsAddressLast And &HFFFF&
-    Else
-        pRegs("PC") = (retAddr - 1) And &HFFFF&
-    End If
-
+    pRegs("PC") = (hi * 256&) Or lo
     mUIRegsDirty = True
     mUIFlagsDirty = True
     mUIStackDirty = True
     RTI = 0
 End Function
+
 ' ------------------------------------------------------------------------------
 ' BRK  Force Break (software interrupt)
 ' Pushes PC+1 (skip padding byte) then SR with B=1; sets I=1; jumps to
@@ -10500,27 +10390,20 @@ Public Sub SetPC(ByVal pcVal As Long)
     mUIRegsDirty = True
 End Sub
 
+' IncPC: advance PC by 1 row (mirrors clsDecCPU.IncPC)
 Public Function IncPC() As Long
-    Dim addrRec As clsAddrRecord
-    Set addrRec = pAddressList.GetAddr(pRegs("PC"))
-    If Not addrRec Is Nothing Then
-        pRegs("PC") = addrRec.clsAddressNext
-    Else
-        pRegs("PC") = (pRegs("PC") + 1) And &HFFFF&
-    End If
+    pRegs("PC") = (pRegs("PC") + 1) And &HFFFF&
     mUIRegsDirty = True
     IncPC = pRegs("PC")
 End Function
 
+' GetCurrentIdx: row index within the program grid (PC - Line0_dec)
 Public Function GetCurrentIdx() As Long
-    Dim addrRec As clsAddrRecord
-    Set addrRec = pAddressList.GetAddr(pRegs("PC"))
-    If Not addrRec Is Nothing Then
-        GetCurrentIdx = addrRec.clsIndex
-    Else
-        GetCurrentIdx = -1
-    End If
+    Dim line0 As Long
+    line0 = CLng(ThisWorkbook.Worksheets("CPU").Range("Line0_dec").value)
+    GetCurrentIdx = CLng(pRegs("PC")) - line0
 End Function
+
 ' SR as a packed byte (for Trace sheet)
 Public Function GetSR() As Byte
     GetSR = HlpFlagPack(False)
@@ -10556,19 +10439,15 @@ End Sub
 '================================================================================
 Public Sub RefreshStack(Optional ByVal force As Boolean = False)
     If Not (mUIStackDirty Or force) Then Exit Sub
-
-    ' Update StackStart to show current SP as 01xx
+    ' Delegate to the shared clsDecStack display helper if you wire it up,
+    ' or write the raw SP / stack-page bytes directly to the sheet here.
+    ' Minimal implementation: just show SP in the StackStart named range.
     Dim wsCPU As Worksheet
     Set wsCPU = ThisWorkbook.Worksheets("CPU")
-    wsCPU.Range("StackStart").value = "01" & Right$("00" & Hex$(pRegs("SP") And 255), 2)
-
-    ' Delegate display to pStack.ShowStack — identical to how clsDecCPU.RefreshStack works.
-    ' ShowStack writes address/value/label into stackView offset columns 1/2/3,
-    ' and clears stackDetails first. Top of stack at row 1, oldest at bottom.
-    pStack.ShowStack True
-
+    wsCPU.Range("StackStart").value = Right$("00" & Hex$(pRegs("SP") And 255), 2)
     mUIStackDirty = False
 End Sub
+
 '================================================================================
 ' INTERNAL HELPER FUNCTIONS
 '================================================================================
@@ -10582,14 +10461,14 @@ End Sub
 Private Function HlpFlagPack(Optional ByVal breakBit As Boolean = False) As Byte
     Dim sr As Long
     sr = 0
-    If pFlags("C") <> 0 Then sr = sr Or &H1
-    If pFlags("Z") <> 0 Then sr = sr Or &H2
-    If pFlags("I") <> 0 Then sr = sr Or &H4
-    If pFlags("D") <> 0 Then sr = sr Or &H8
-    If breakBit Or (pFlags("B") <> 0) Then sr = sr Or &H10
+    If pFlags("Carry") <> 0 Then sr = sr Or &H1
+    If pFlags("Zero") <> 0 Then sr = sr Or &H2
+    If pFlags("Interrupt") <> 0 Then sr = sr Or &H4
+    If pFlags("Decimal") <> 0 Then sr = sr Or &H8
+    If breakBit Or (pFlags("Break") <> 0) Then sr = sr Or &H10
     sr = sr Or &H20               ' bit 5 always 1 in hardware
-    If pFlags("V") <> 0 Then sr = sr Or &H40
-    If pFlags("N") <> 0 Then sr = sr Or &H80
+    If pFlags("Overflow") <> 0 Then sr = sr Or &H40
+    If pFlags("Negative") <> 0 Then sr = sr Or &H80
     HlpFlagPack = CByte(sr And 255)
 End Function
 
@@ -10598,13 +10477,13 @@ End Function
 ' Restores pFlags from a packed SR byte (used by PLP, RTI).
 '------------------------------------------------------------------------------
 Private Sub HlpFlagUnpack(ByVal sr As Byte)
-    pFlags("C") = IIf((sr And &H1) <> 0, 1, 0)
-    pFlags("Z") = IIf((sr And &H2) <> 0, 1, 0)
-    pFlags("I") = IIf((sr And &H4) <> 0, 1, 0)
-    pFlags("D") = IIf((sr And &H8) <> 0, 1, 0)
-    pFlags("B") = IIf((sr And &H10) <> 0, 1, 0)
-    pFlags("V") = IIf((sr And &H40) <> 0, 1, 0)
-    pFlags("N") = IIf((sr And &H80) <> 0, 1, 0)
+    pFlags("Carry") = IIf((sr And &H1) <> 0, 1, 0)
+    pFlags("Zero") = IIf((sr And &H2) <> 0, 1, 0)
+    pFlags("Interrupt") = IIf((sr And &H4) <> 0, 1, 0)
+    pFlags("Decimal") = IIf((sr And &H8) <> 0, 1, 0)
+    pFlags("Break") = IIf((sr And &H10) <> 0, 1, 0)
+    pFlags("Overflow") = IIf((sr And &H40) <> 0, 1, 0)
+    pFlags("Negative") = IIf((sr And &H80) <> 0, 1, 0)
     mUIFlagsDirty = True
 End Sub
 
@@ -10614,8 +10493,8 @@ End Sub
 '------------------------------------------------------------------------------
 Private Sub HlpFlagNZ(ByVal result As Long)
     result = result And 255
-    pFlags("Z") = IIf(result = 0, 1, 0)
-    pFlags("N") = IIf((result And &H80) <> 0, 1, 0)
+    pFlags("Zero") = IIf(result = 0, 1, 0)
+    pFlags("Negative") = IIf((result And &H80) <> 0, 1, 0)
     mUIFlagsDirty = True
 End Sub
 
@@ -10633,17 +10512,17 @@ Private Sub HlpALU_Add(ByVal m As Long)
     sum = a + m + (pFlags("C") And 1)
 
     ' Overflow: set if sign of result differs from both operands' sign
-    pFlags("V") = IIf(((Not (a Xor m)) And (a Xor sum) And &H80) <> 0, 1, 0)
-    pFlags("C") = IIf(sum > 255, 1, 0)
+    pFlags("Overflow") = IIf(((Not (a Xor m)) And (a Xor sum) And &H80) <> 0, 1, 0)
+    pFlags("Carry") = IIf(sum > 255, 1, 0)
 
     ' BCD correction when D=1
-    If pFlags("D") = 1 Then
+    If pFlags("Decimal") = 1 Then
         If (a And &HF) + (m And &HF) + (pFlags("C") And 1) > 9 Then
             sum = sum + 6
         End If
         If sum > &H99 Then
             sum = sum + 96
-            pFlags("C") = 1
+            pFlags("Carry") = 1
         End If
     End If
 
@@ -10663,9 +10542,9 @@ Private Sub HlpALU_Compare(ByVal regVal As Long, ByVal m As Long)
     regVal = regVal And 255
     m = m And 255
     diff = regVal - m
-    pFlags("C") = IIf(regVal >= m, 1, 0)
-    pFlags("Z") = IIf(diff = 0, 1, 0)
-    pFlags("N") = IIf((diff And &H80) <> 0, 1, 0)
+    pFlags("Carry") = IIf(regVal >= m, 1, 0)
+    pFlags("Zero") = IIf(diff = 0, 1, 0)
+    pFlags("Negative") = IIf((diff And &H80) <> 0, 1, 0)
     mUIFlagsDirty = True
 End Sub
 
@@ -10677,29 +10556,18 @@ End Sub
 '------------------------------------------------------------------------------
 Private Function HlpBranch(ByVal condition As Boolean, ByVal op1 As String, _
     ByVal errorBase As Long, ByVal mnem As String) As Long
-
     If Not condition Then
         HlpBranch = 0
         Exit Function
     End If
-
     Dim target As Long
     target = HlpResolveAddr(op1, errorBase, mnem)
     If pLastErrCode <> 0 Then HlpBranch = pLastErrCode: Exit Function
-
-    ' Use clsAddressLast so IncPC() in the execute loop lands ON the target row.
-    ' Same pattern as 8080 JMP -> SetPC(addRec.clsAddressLast).
-    Dim addrRec As clsAddrRecord
-    Set addrRec = pAddressList.GetAddr(target)
-    If Not addrRec Is Nothing Then
-        pRegs("PC") = addrRec.clsAddressLast And &HFFFF&
-    Else
-        pRegs("PC") = (target - 1) And &HFFFF&   ' fallback
-    End If
-
+    pRegs("PC") = target And &HFFFF&
     mUIRegsDirty = True
     HlpBranch = 0
 End Function
+
 '------------------------------------------------------------------------------
 ' HlpResolveAddr
 ' Resolves a label or hex address string to a decimal address.
@@ -10919,10 +10787,6 @@ Private Sub SetError(ByVal code As Long, ByVal msg As String)
     End If
 End Sub
 
-Public Sub ResetStack()
-    Set pStack = New clsDecStack
-End Sub
-
 '================================================================================
 ' END cls6510CPU
 '================================================================================
@@ -10964,7 +10828,6 @@ Public Sub Execute6510()
 
     '--- Named-range reads ---
     Dim stepMode   As Boolean: stepMode = (CLng(wsCPU.Range("Step").value) = 1)
-    Dim atEnd      As Boolean: atEnd = (CLng(wsCPU.Range("AtEnd").value) = 1)
     Dim doReset    As Boolean: doReset = (CLng(wsCPU.Range("Reset").value) = 1)
     Dim skipBreaks As Boolean: skipBreaks = (CLng(wsCPU.Range("SkipBreaks").value) = 1)
     Dim maxIters   As Long:    maxIters = CLng(wsCPU.Range("Max_Iters").value)
@@ -10977,7 +10840,6 @@ Public Sub Execute6510()
 
     Dim memStart As Long: memStart = usrHexToDec(CStr(wsCPU.Range("MemStart").value))
     Dim memEnd   As Long: memEnd = memStart + usrHexToDec(CStr(wsCPU.Range("MemSize").value))
-    Dim debugMode As Boolean: debugMode = (CLng(wsCPU.Range("Debug").value) = 1)
 
     '--- Run state ---
     Dim myCpu            As cls6510cpu
@@ -11006,12 +10868,6 @@ Public Sub Execute6510()
 
     '--- Reset vs continue ---
     Set myCpu = g6510
-    
-    'if at end of program auto reset
-    If atEnd Then
-        doReset = True
-        wsCPU.Range("AtEnd").value = 0
-    End If
 
     If doReset Then
         If TraceEnabled() Then TraceClear
@@ -11026,7 +10882,6 @@ Public Sub Execute6510()
         pc_dec = CLng(wsCPU.Range("Line0_dec").value)
         myCpu.SetPC pc_dec
         myCpu.SetReg "SP", &HFF              ' 6510 SP = $FF at reset
-        myCpu.ResetStack
 
         wsCPU.Range("StackStart").value = "01FF"
         wsCPU.Range("StackDetails").ClearContents
@@ -11124,6 +10979,8 @@ Public Sub Execute6510()
 
         op1 = Trim$(UCase$(op1))
         op2 = Trim$(UCase$(op2))
+        ' Merge op2 index register into op1 (spreadsheet convention: addr in op1, X/Y in op2)
+        If op2 <> "" And InStr(op1, ",") = 0 Then op1 = op1 & "," & op2
 
         '--- Break handling (identical to Execute8080) ---
         If rowStat = "B" And Not stepMode And Not skipBreaks Then
@@ -11172,15 +11029,26 @@ Public Sub Execute6510()
                 End If
             End If
 
-            '--- Execute ---
-            If debugMode Then
-                RefreshRegisters6510 myCpu
-                RefreshFlags6510 myCpu
-                Application.Calculate
-                Debug.Assert Not debugMode
+              '--- KERNAL trap intercept ---
+            Dim kernalHandled As Boolean
+            kernalHandled = False
+            If opcode = "JSR" Then
+                ' Resolve target address to check against trap table
+                Dim trapTarget As Long
+                trapTarget = usrHexToDec(op1) And &HFFFF&   ' op1 is already a hex address string
+                If g6510KernalTraps Is Nothing Then Init6510KernalTraps
+                If g6510KernalTraps.Exists(trapTarget) Then
+                    kernalHandled = DispatchKernalTrap(myCpu, trapTarget, op1)
+                End If
             End If
             
-            errcode = myCpu.RunOpcode(opcode, op1, op2, label)
+            If Not kernalHandled Then
+                errcode = myCpu.RunOpcode(opcode, op1, op2, label)
+            Else
+                errcode = 0   ' trap succeeded; treat as NOP for error checking
+            End If
+            
+            '--- Execute ---
             executedThisIter = True
 
             '--- Trace: post-execution snapshot ---
@@ -11277,8 +11145,6 @@ ExecFinalize6510:
         wsCPU.Range("Reset").value = 0
     ElseIf endedByEnd Then
         wsCPU.Range("errMessage") = "Execution Complete"
-        wsCPU.Range("AtEnd").value = 1
-        
     End If
 
 End Sub
@@ -11432,7 +11298,6 @@ Public Sub Assemble6510_ToMachine()
     Set rngMem = wsCPU.Range("MemoryTable")
 
     '--- Recalculate so Dec Line / Bytes formulas are current ----------------
-    Application.CalculateFull
     Application.Calculate
     Application.ScreenUpdating = False
 
@@ -11486,22 +11351,24 @@ Public Sub Assemble6510_ToMachine()
 
             '--- Assembler directives ----------------------------------------
 
-            Case "ORG"
+           Case "ORG"
                 If op1 = "" Then
                     cmpRaiseAsmError wsCPU, "ORG: missing operand", cur
                     GoTo Asm6510Done
                 End If
                 pc = cmpResolveValue16(lbls, UCase$(op1))
+                ' Keep MemStart in sync so RefreshMemoryTable shows the right window
+                If pc <> memStartDec Then
+                    wsCPU.Range("MemStart").value = Right$("0000" & Hex$(pc), 4)
+                    memStartDec = pc
+                End If
                 GoTo NextRow6510
 
             Case "EQU"
                 GoTo NextRow6510
 
             Case "END", "HLT", "STP"
-                 Dim endByte(0) As Variant
-                 endByte(0) = 0
-                 bytesOut = endByte
-                ' fall through to the emit block below — do NOT GoTo NextRow6510
+                GoTo NextRow6510
 
             Case "DB"
                 Dim dbVal As String
@@ -11598,8 +11465,12 @@ Private Function Hlp6510FindOpcode(ByVal opMap As Object, _
                                    ByVal op1 As String, _
                                    ByVal op2 As String) As Variant
     Dim spec As String
-    spec = Hlp6510ClassifyOp1(op1)
-
+    Dim op1Combined As String
+    op1Combined = op1
+    If op2 <> "" And InStr(op1, ",") = 0 Then
+        op1Combined = op1 & "," & op2
+    End If
+    spec = Hlp6510ClassifyOp1(op1Combined)
     Dim key As String
 
     key = mnem & "|" & spec & "|"
@@ -12570,4 +12441,249 @@ Private Sub Test6510_Compare()
     ChkFlag 1, cpu.Flag("C"), "C", "CPY greater C=1"
 End Sub
 
+
+
+''' Component: mod6510KernalTraps
+Option Explicit
+'================================================================================
+' Module: modKernalTraps
+' Purpose: VBA implementations of C64 KERNAL ROM routines for the 6510 emulator.
+'          Called by Execute6510 when JSR targets a known KERNAL vector.
+'          Each handler receives the live CPU, manipulates A/X/Y/flags/memory,
+'          then returns — the execute loop handles the implicit RTS.
+'================================================================================
+
+'------------------------------------------------------------------------------
+' DispatchKernalTrap
+' Called from Execute6510 when opcode=JSR and target is a KERNAL address.
+' Returns True if handled (skip RunOpcode), False if not a trap.
+'------------------------------------------------------------------------------
+'==============================================================================
+' CURSOR HELPERS  (track cursor in ZP $D3=col, $D6=row)
+' Screen RAM base $0400; 40 cols x 25 rows
+'==============================================================================
+Private Const SCREEN_BASE   As Long = &H400&
+Private Const SCREEN_COLS   As Long = 40
+Private Const SCREEN_ROWS   As Long = 25
+Private Const ZP_CURSOR_COL As Long = &HD3&   ' same as real C64
+Private Const ZP_CURSOR_ROW As Long = &HD6&
+
+
+Public Function DispatchKernalTrap(ByVal myCpu As cls6510cpu, _
+                                    ByVal target As Long, _
+                                    ByVal op1 As String) As Boolean
+    Init6510KernalTraps
+    If Not g6510KernalTraps.Exists(target) Then
+        DispatchKernalTrap = False
+        Exit Function
+    End If
+
+    Dim handlerName As String
+    handlerName = g6510KernalTraps(target)
+
+    Select Case handlerName
+        Case "CHROUT": KTrap_CHROUT myCpu
+        Case "GETIN":  KTrap_GETIN myCpu
+        Case "CHRIN":  KTrap_CHRIN myCpu
+        Case "SETMSG": KTrap_SETMSG myCpu
+        Case "OPEN":   KTrap_OPEN myCpu
+        Case "CLOSE":  KTrap_CLOSE myCpu
+        Case "CLRCHN": KTrap_CLRCHN myCpu
+        Case "STOP":   KTrap_STOP myCpu
+        Case Else
+            ' Unknown trap name — treat as NOP, log it
+            Debug.Print "KernalTrap: No handler for " & handlerName & " at $" & Hex$(target)
+    End Select
+
+    DispatchKernalTrap = True
+End Function
+
+'------------------------------------------------------------------------------
+' KTrap_CHROUT  ($FFD2)
+' Output character in A to the emulated screen / console.
+' Real KERNAL: outputs to current output channel; sets C=0 on success.
+' Emulator:    appends to console output; writes char to screen RAM at cursor.
+'
+' Screen RAM: $0400-$07E7 (1000 bytes, 40x25)
+' Cursor position: tracked in ZP $D3 (col) and $D6 (row) — same as real C64.
+' Color RAM:  $D800-$DBE7  (we skip color, just write screen codes)
+'
+' C64 screen codes ? ASCII for some chars; we handle the common subset.
+'------------------------------------------------------------------------------
+Private Sub KTrap_CHROUT(ByVal myCpu As cls6510cpu)
+    Dim ch As Long
+    ch = myCpu.Reg("A") And 255
+
+    ' --- Console output (always) ---
+    Dim printChar As String
+    Select Case ch
+        Case 13:        ' CR — move to next line in console
+            ConsolePrint "", True           ' newline
+            KCursorNewline myCpu
+        Case 147:       ' CLR/HOME — clear screen
+            ClearConsole
+            KCursorHome myCpu
+        Case 17:        ' Cursor down
+            KCursorDown myCpu
+        Case 145:       ' Cursor up
+            KCursorUp myCpu
+        Case 29:        ' Cursor right
+            KCursorRight myCpu
+        Case 157:       ' Cursor left
+            KCursorLeft myCpu
+        Case 18:        ' Reverse on  — skip (no color support yet)
+        Case 146:       ' Reverse off — skip
+        Case 14:        ' Switch to lowercase charset — skip
+        Case 142:       ' Switch to uppercase charset — skip
+        Case Else
+            ' Printable: map C64 screen code to character
+            printChar = KScreenCodeToChar(ch)
+            ConsolePrint printChar, False
+            KCursorWriteAndAdvance myCpu, ch
+    End Select
+
+    ' Real KERNAL sets C=0 on success
+    myCpu.SetFlag "C", 0
+End Sub
+
+'------------------------------------------------------------------------------
+' KTrap_GETIN  ($FFE4)
+' Read one character from keyboard buffer ? A.
+' If buffer empty, A=0. Z flag reflects (A=0).
+' Emulator: always returns 0 (no keyboard input support yet).
+'------------------------------------------------------------------------------
+Private Sub KTrap_GETIN(ByVal myCpu As cls6510cpu)
+    myCpu.SetReg "A", 0
+    myCpu.SetFlag "Z", 1
+    myCpu.SetFlag "N", 0
+    myCpu.SetFlag "C", 0
+End Sub
+
+'------------------------------------------------------------------------------
+' KTrap_CHRIN  ($FFCF)
+' Input character from current channel ? A.
+' Emulator: returns 0 (no input support yet).
+'------------------------------------------------------------------------------
+Private Sub KTrap_CHRIN(ByVal myCpu As cls6510cpu)
+    myCpu.SetReg "A", 0
+    myCpu.SetFlag "Z", 1
+    myCpu.SetFlag "N", 0
+End Sub
+
+'------------------------------------------------------------------------------
+' KTrap_SETMSG  ($FF90)
+' A = control byte: bit 7 = KERNAL messages, bit 6 = error messages.
+' Emulator: NOP (no KERNAL messages to display).
+'------------------------------------------------------------------------------
+Private Sub KTrap_SETMSG(ByVal myCpu As cls6510cpu)
+    ' Nothing to do — store A into the KERNAL message flag location if desired
+    ' Real address: $9D
+    gMemory.addr(&H9D) = CByte(myCpu.Reg("A") And 255)
+End Sub
+
+'------------------------------------------------------------------------------
+' KTrap_OPEN  ($FFC0)
+' Open a logical file. Parameters in: A=logical#, X=device#, Y=sec addr.
+' Emulator: NOP (no I/O channels). Sets C=0 (success).
+'------------------------------------------------------------------------------
+Private Sub KTrap_OPEN(ByVal myCpu As cls6510cpu)
+    myCpu.SetFlag "C", 0
+End Sub
+
+'------------------------------------------------------------------------------
+' KTrap_CLOSE  ($FFC3)
+' Close logical file in A. Emulator: NOP.
+'------------------------------------------------------------------------------
+Private Sub KTrap_CLOSE(ByVal myCpu As cls6510cpu)
+    myCpu.SetFlag "C", 0
+End Sub
+
+'------------------------------------------------------------------------------
+' KTrap_CLRCHN  ($FFB1)
+' Reset I/O channels to keyboard/screen defaults. Emulator: NOP.
+'------------------------------------------------------------------------------
+Private Sub KTrap_CLRCHN(ByVal myCpu As cls6510cpu)
+    ' Nothing to do
+End Sub
+
+'------------------------------------------------------------------------------
+' KTrap_STOP  ($FFE1)
+' Check if STOP key pressed. Sets Z=1 if pressed. Emulator: always Z=0 (not pressed).
+'------------------------------------------------------------------------------
+Private Sub KTrap_STOP(ByVal myCpu As cls6510cpu)
+    myCpu.SetFlag "Z", 0    ' STOP key never pressed in emulator
+    myCpu.SetFlag "C", 0
+End Sub
+
+Private Function KGetCol(ByVal myCpu As cls6510cpu) As Long
+    KGetCol = CLng(gMemory.addr(ZP_CURSOR_COL)) And 255
+End Function
+Private Function KGetRow(ByVal myCpu As cls6510cpu) As Long
+    KGetRow = CLng(gMemory.addr(ZP_CURSOR_ROW)) And 255
+End Function
+Private Sub KSetCol(ByVal col As Long)
+    gMemory.addr(ZP_CURSOR_COL) = CByte(col And 255)
+End Sub
+Private Sub KSetRow(ByVal row As Long)
+    gMemory.addr(ZP_CURSOR_ROW) = CByte(row And 255)
+End Sub
+
+Private Sub KCursorWriteAndAdvance(ByVal myCpu As cls6510cpu, ByVal screenCode As Long)
+    Dim col As Long: col = KGetCol(myCpu)
+    Dim row As Long: row = KGetRow(myCpu)
+    If row >= SCREEN_ROWS Then row = SCREEN_ROWS - 1  ' clamp
+    If col >= SCREEN_COLS Then col = 0: row = row + 1  ' wrap
+    Dim addr As Long: addr = SCREEN_BASE + (row * SCREEN_COLS) + col
+    gMemory.addr(addr) = CByte(screenCode And 255)
+    col = col + 1
+    If col >= SCREEN_COLS Then col = 0: row = (row + 1) Mod SCREEN_ROWS
+    KSetCol col
+    KSetRow row
+End Sub
+
+Private Sub KCursorNewline(ByVal myCpu As cls6510cpu)
+    KSetCol 0
+    Dim row As Long: row = KGetRow(myCpu) + 1
+    If row >= SCREEN_ROWS Then row = SCREEN_ROWS - 1
+    KSetRow row
+End Sub
+
+Private Sub KCursorHome(ByVal myCpu As cls6510cpu)
+    KSetCol 0: KSetRow 0
+End Sub
+Private Sub KCursorDown(ByVal myCpu As cls6510cpu)
+    Dim r As Long: r = KGetRow(myCpu) + 1
+    If r >= SCREEN_ROWS Then r = SCREEN_ROWS - 1
+    KSetRow r
+End Sub
+Private Sub KCursorUp(ByVal myCpu As cls6510cpu)
+    Dim r As Long: r = KGetRow(myCpu) - 1
+    If r < 0 Then r = 0
+    KSetRow r
+End Sub
+Private Sub KCursorRight(ByVal myCpu As cls6510cpu)
+    Dim c As Long: c = KGetCol(myCpu) + 1
+    If c >= SCREEN_COLS Then c = 0
+    KSetCol c
+End Sub
+Private Sub KCursorLeft(ByVal myCpu As cls6510cpu)
+    Dim c As Long: c = KGetCol(myCpu) - 1
+    If c < 0 Then c = SCREEN_COLS - 1
+    KSetCol c
+End Sub
+
+'------------------------------------------------------------------------------
+' KScreenCodeToChar
+' Converts a C64 PETSCII/screen code to a VBA printable character.
+' C64 uppercase mode: $01-$1A = A-Z, $20-$3F ˜ ASCII space-?, $41-$5A = A-Z
+'------------------------------------------------------------------------------
+Private Function KScreenCodeToChar(ByVal code As Long) As String
+    Select Case code
+        Case 32 To 90:   KScreenCodeToChar = Chr$(code)           ' space, digits, A-Z
+        Case 1 To 26:    KScreenCodeToChar = Chr$(code + 64)      ' screen codes 1-26 = A-Z
+        Case 91 To 126:  KScreenCodeToChar = Chr$(code)           ' punctuation
+        Case 192 To 218: KScreenCodeToChar = Chr$(code - 128)     ' shifted A-Z
+        Case Else:        KScreenCodeToChar = "?"
+    End Select
+End Function
 
