@@ -1,6 +1,6 @@
 === VBA EXPORT: 6510 Model Current.xlsm ===
-Timestamp: 4/2/2026 11:19:11 AM
-Version: 2.33
+Timestamp: 4/1/2026 4:12:16 PM
+Version: 2.31
 ================================================================================
 
 ''' Component: ThisWorkbook
@@ -6552,14 +6552,6 @@ Public Sub RefreshMemoryTable()
 
 End Sub
 
-Public Function getMem(memAddrHex As String) As String
-    
-    If Not pMemory Is Nothing Then
-        getMem = pMemory.addr(usrHexToDec(memAddrHex))
-    Else
-        getMem = 0
-    End If
-End Function
 '================================================================================
 ' Module:       modGlobals
 '================================================================================
@@ -6798,7 +6790,9 @@ Public Sub Execute8080()
         Dim memCheck As Long: memCheck = usrHexToDec(MEM_START_DEFAULT)
         If Range("Line0").offset(0, ofs_opcode) = "ORG" Then
             op1 = Range("Line0").offset(0, ofs_op1).value
-            memCheck = usrHexToDec(op1)
+            If usrValIsHexString(op1) And usrHexToDec(op1) <> memCheck Then
+                memCheck = usrHexToDec(op1)
+            End If
         End If
         If usrHexToDec(Range("MemStart").value) <> memCheck Then
             Range("MemStart").value = Hex$(memCheck)
@@ -9643,12 +9637,12 @@ Public Function RunOpcode(ByVal opcode As String, _
         '----------------------------------------------------------------------
         ' Load / Store
         '----------------------------------------------------------------------
-        Case "LDA": result = Me.LDA(HlpMergeOp(op1, op2))
-        Case "LDX": result = Me.LDX(HlpMergeOp(op1, op2))
-        Case "LDY": result = Me.LDY(HlpMergeOp(op1, op2))
-        Case "STA": result = Me.STA(HlpMergeOp(op1, op2))
-        Case "STX": result = Me.STX(HlpMergeOp(op1, op2))
-        Case "STY": result = Me.STY(HlpMergeOp(op1, op2))
+        Case "LDA": result = Me.LDA(op1)
+        Case "LDX": result = Me.LDX(op1)
+        Case "LDY": result = Me.LDY(op1)
+        Case "STA": result = Me.STA(op1)
+        Case "STX": result = Me.STX(op1)
+        Case "STY": result = Me.STY(op1)
 
         '----------------------------------------------------------------------
         ' Register transfers
@@ -9671,37 +9665,38 @@ Public Function RunOpcode(ByVal opcode As String, _
         '----------------------------------------------------------------------
         ' Arithmetic
         '----------------------------------------------------------------------
-        Case "ADC": result = Me.ADC(HlpMergeOp(op1, op2))
-        Case "SBC": result = Me.SBC(HlpMergeOp(op1, op2))
-        Case "INC": result = Me.INC(HlpMergeOp(op1, op2))
+        Case "ADC": result = Me.ADC(op1)
+        Case "SBC": result = Me.SBC(op1)
+        Case "INC": result = Me.INC(op1)
         Case "INX": result = Me.INX()
         Case "INY": result = Me.INY()
-        Case "DEC": result = Me.DEC(HlpMergeOp(op1, op2))
+        Case "DEC": result = Me.DEC(op1)
         Case "DEX": result = Me.DEX()
         Case "DEY": result = Me.DEY()
 
         '----------------------------------------------------------------------
         ' Logical
         '----------------------------------------------------------------------
-        Case "AND": result = Me.AND_(HlpMergeOp(op1, op2))
-        Case "ORA": result = Me.ORA(HlpMergeOp(op1, op2))
-        Case "EOR": result = Me.EOR(HlpMergeOp(op1, op2))
-        Case "BIT": result = Me.BIT(HlpMergeOp(op1, op2))
-        
+        Case "AND": result = Me.AND_(op1)
+        Case "ORA": result = Me.ORA(op1)
+        Case "EOR": result = Me.EOR(op1)
+        Case "BIT": result = Me.BIT(op1)
+
         '----------------------------------------------------------------------
         ' Shifts & Rotates
         '----------------------------------------------------------------------
-        Case "ASL": result = Me.ASL(HlpMergeOp(op1, op2))
-        Case "LSR": result = Me.LSR(HlpMergeOp(op1, op2))
-        Case "ROL": result = Me.ROL(HlpMergeOp(op1, op2))
-        Case "ROR": result = Me.ROR(HlpMergeOp(op1, op2))
-        
+        Case "ASL": result = Me.ASL(op1)
+        Case "LSR": result = Me.LSR(op1)
+        Case "ROL": result = Me.ROL(op1)
+        Case "ROR": result = Me.ROR(op1)
+
         '----------------------------------------------------------------------
         ' Compare
         '----------------------------------------------------------------------
-        Case "CMP": result = Me.CMP(HlpMergeOp(op1, op2))
-        Case "CPX": result = Me.CPX(HlpMergeOp(op1, op2))
-        Case "CPY": result = Me.CPY(HlpMergeOp(op1, op2))
+        Case "CMP": result = Me.CMP(op1)
+        Case "CPX": result = Me.CPX(op1)
+        Case "CPY": result = Me.CPY(op1)
+
         '----------------------------------------------------------------------
         ' Branches (all relative; op1 = target label or hex offset)
         '----------------------------------------------------------------------
@@ -10922,27 +10917,6 @@ Private Function HlpStackPull() As Byte
 End Function
 
 '------------------------------------------------------------------------------
-' HlpMergeOp
-' Merges op2 (index register X or Y) into op1 to form the canonical
-' addressing mode string expected by HlpEffectiveAddress.
-'
-' Examples:
-'   op1="0901"  op2="X"  ->  "0901,X"
-'   op1="42"    op2="Y"  ->  "42,Y"
-'   op1="0901"  op2=""   ->  "0901"      (no change)
-'   op1="(42,X)" op2=""  ->  "(42,X)"   (already encoded, no change)
-'   op1="#41"   op2=""   ->  "#41"       (immediate, no change)
-'------------------------------------------------------------------------------
-Private Function HlpMergeOp(ByVal op1 As String, ByVal op2 As String) As String
-    op2 = Trim$(UCase$(op2))
-    If (op2 = "X" Or op2 = "Y") And InStr(op1, ",") = 0 Then
-        HlpMergeOp = op1 & "," & op2
-    Else
-        HlpMergeOp = op1
-    End If
-End Function
-
-'------------------------------------------------------------------------------
 ' SetError  (mirrors clsDecCPU.SetError)
 '------------------------------------------------------------------------------
 Private Sub SetError(ByVal code As Long, ByVal msg As String)
@@ -10956,7 +10930,6 @@ End Sub
 Public Sub ResetStack()
     Set pStack = New clsDecStack
 End Sub
-
 
 '================================================================================
 ' END cls6510CPU
@@ -11012,7 +10985,7 @@ Public Sub Execute6510()
 
     Dim memStart As Long: memStart = usrHexToDec(CStr(wsCPU.Range("MemStart").value))
     Dim memEnd   As Long: memEnd = memStart + usrHexToDec(CStr(wsCPU.Range("MemSize").value))
-    Dim debugMode As Boolean: debugMode = (CLng(Range("Debug").value) = 1)
+    Dim debugMode As Boolean: debugMode = (CLng(wsCPU.Range("Debug").value) = 1)
 
     '--- Run state ---
     Dim myCpu            As cls6510cpu
@@ -11038,11 +11011,12 @@ Public Sub Execute6510()
                 ' Strip $ before writing to sheet so MemStart stays as bare hex (e.g. "0300")
                 Dim orgValBare As String: orgValBare = orgVal
                 If Left$(orgValBare, 1) = "$" Then orgValBare = Mid$(orgValBare, 2)
-                memCheck = usrHexToDec(orgValBare)
+                If usrHexToDec(orgValBare) <> memCurrent Then
+                    memCheck = usrHexToDec(orgValBare)
+                End If
             End If
             If memCheck <> memCurrent Then
                 wsCPU.Range("MemStart").value = Hex$(memCheck)
-                Range("MemStart").value = Hex$(memCheck)
                 Application.Calculate
                 memStart = usrHexToDec(memCheck)
                 memEnd = memStart + usrHexToDec(CStr(wsCPU.Range("MemSize").value))
@@ -11062,7 +11036,6 @@ Public Sub Execute6510()
     If doReset Then
         If TraceEnabled() Then TraceClear
         InvalidateExecCache                  ' shared cache in modGlobals
-        usrMemReset
         ResetDecCPU6510
         Set myCpu = g6510
         ResetAddressList
@@ -11078,7 +11051,7 @@ Public Sub Execute6510()
         wsCPU.Range("StackStart").value = "01FF"
         wsCPU.Range("StackDetails").ClearContents
 
-        If stepMode Or debugMode Then
+        If stepMode Then
             RefreshFlags6510 myCpu
             RefreshRegisters6510 myCpu
             myCpu.RefreshStack True
@@ -11224,11 +11197,6 @@ Public Sub Execute6510()
                 RefreshRegisters6510 myCpu
                 RefreshFlags6510 myCpu
                 Application.Calculate
-                Debug.Print
-                Debug.Print "opcode", "op1", "op2"
-                Debug.Print opcode, op1, op2
-                Debug.Print "PC", "A", "X", "Y", "SP", "C", "N", "V", "B", "D", "I"
-                Debug.Print myCpu.Reg("PC"), myCpu.Reg("A"), myCpu.Reg("X"), myCpu.Reg("Y"), myCpu.Reg("SP")
                 Debug.Assert Not debugMode
             End If
             
@@ -11392,12 +11360,6 @@ Public Sub RefreshFlags6510(ByRef myCpu As cls6510cpu)
     myCpu.FlagsDirty = False
 End Sub
 
-Private Sub DebugPrintRegisters(ByRef inCpu As cls6510cpu)
-    Dim myCpu As cls6510cpu
-    Set myCpu = inCpu
-    Debug.Print "PC", "A", "X", "Y", "SP", "C", "N", "V", "B", "D", "I"
-    Debug.Print myCpu.Reg("PC"), myCpu.Reg("A"), myCpu.Reg("X"), myCpu.Reg("Y"), myCpu.Reg("SP")
-End Sub
 
 ''' Component: Sheet11
 ''' [No code]

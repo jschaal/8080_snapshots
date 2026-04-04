@@ -1,6 +1,6 @@
-=== VBA EXPORT: 6510 Model Current.xlsm ===
-Timestamp: 4/2/2026 11:19:11 AM
-Version: 2.33
+=== VBA EXPORT: 6510 Model Current_Performance.xlsm ===
+Timestamp: 3/31/2026 1:52:46 PM
+Version: 2.27
 ================================================================================
 
 ''' Component: ThisWorkbook
@@ -314,7 +314,6 @@ Public Sub RunDynamicTests()
     Dim overrideTrace As Boolean
     Dim overrideSkipBreaks As Boolean
     Dim savedCPUMode As String
-    Dim savedMemStart As String: savedMemStart = ""
     Dim testCPUMode As String
     Dim compileThis As Boolean
 
@@ -417,7 +416,6 @@ Public Sub RunDynamicTests()
                     ' C) Set CPU mode BEFORE compile and execute.
                     '    CPU column is only in the control table - look it up by name.
                     savedCPUMode = cpuMode()
-                    savedMemStart = CStr(wsEMU.Range("MemStart").value)  ' ADD THIS
                     testCPUMode = "8080"    ' safe default
                     If cpuCol > 0 Then
                         Dim ctrlIdx As Variant
@@ -445,8 +443,7 @@ Public Sub RunDynamicTests()
 
                     ' F) Restore CPUMode to what user had selected
                     wsEMU.Range("CPUMode").value = savedCPUMode
-                    wsEMU.Range("MemStart").value = savedMemStart          ' ADD THIS
-                    Application.Calculate                                   ' ADD THIS
+
                     ' G) Validate and record result
                     If TestValidateMultipleCriteria(testRange) Then
                         wsTest.Cells(nameRow, resultsCol).value = "PASS"
@@ -788,7 +785,6 @@ Public Sub ClearConsole()
 End Sub
 
 Public Sub ConPrtLn(ByVal data As String, Optional ByVal prtSpace As Boolean = False)
-    If Not mConsoleOpen Then ShowConsole
     With Me.tbConsole
         .Locked = False
         ' Append text
@@ -811,7 +807,6 @@ Public Sub ConPrtLn(ByVal data As String, Optional ByVal prtSpace As Boolean = F
 End Sub
 
 Public Sub ConPrt(ByVal data As String, Optional ByVal prtSpace As Boolean = False)
-    If Not mConsoleOpen Then ShowConsole
     With Me.tbConsole
         .Locked = False
         .value = .value & IIf(Len(.value) > 0 And prtSpace, " ", "") & data
@@ -835,8 +830,6 @@ Public Function ConReadByte() As Byte
     Dim outByte As Byte
     Dim power As Long
     outByte = 0
-    
-    If Not mConsoleOpen Then ShowConsole
     
     If Me.tgl7.value Then
         outByte = outByte Or 128
@@ -883,8 +876,6 @@ End Function
 Public Sub ConSetByte(ByVal inByte)
     Dim wsUnitTest As Worksheet
     Set wsUnitTest = ThisWorkbook.Worksheets("Unit Tests")
-    
-    If Not mConsoleOpen Then ShowConsole
 
     If (inByte And 1) = 1 Then
         Me.tgl0.value = True
@@ -947,8 +938,6 @@ End Sub
 Public Sub ConSetLights(ByVal inByte)
     Dim wsUnitTest As Worksheet
     Set wsUnitTest = ThisWorkbook.Worksheets("Unit Tests")
-
-    If Not mConsoleOpen Then ShowConsole
 
     If (inByte And 1) = 1 Then
         Me.txt0.BackColor = 65535
@@ -2417,6 +2406,32 @@ Public Function JMP(ByVal op1 As String) As Long
 End Function
 ' ---  ---
 ' End JMP
+Public Function JMP_o(op1 As String) As Long
+    Dim errorBase As Long: errorBase = 300
+    Dim memEnd_dec As Long, op_dec As Long
+    Dim record As clsLabelRecord
+    Dim line0Address As Long
+    Dim addRec As clsAddrRecord
+
+    If op1 = "" Then SetError errorBase, "JMP: Missing Operand: " & op1: JMP_o = errorBase: Exit Function
+
+    Set record = pLabels.GetLabel(op1)
+    If record Is Nothing Then SetError errorBase + 1, "JMP: Missing Label: " & op1: JMP_o = errorBase + 1: Exit Function
+
+    op1 = record.clsAddressHex
+    If Not usrValIsHexString(op1) Then SetError errorBase + 2, "JMP: Invalid Operand: " & op1: JMP_o = errorBase + 2: Exit Function
+
+    memEnd_dec = Range("MemEnd").offset(0, 1).value
+    op_dec = usrHexToDec(op1)
+    If op_dec < 0 Or op_dec > memEnd_dec Then SetError errorBase + 3, "JMP: Invalid Address: " & op1: JMP_o = errorBase + 3: Exit Function
+
+    Set addRec = pAddressList.GetAddr(op_dec)
+    SetPC addRec.clsAddressLast
+
+    JMP_o = 0
+End Function
+' ---  ---
+' End JMP
 
 ' ==============================================================================
 ' JC / JNC / JZ / JNZ / JP / JM / JPE / JPO (Conditional Jumps)
@@ -2466,7 +2481,7 @@ End Function
 '   151: Invalid address (not valid hex)
 ' ==============================================================================
 Public Function JZ(ByVal op1 As String) As Long
-    If HlpTestCondition("Z") Then
+    If HlpEvaluateCondition("JZ") Then
         JZ = JMP(op1)
     Else
         JZ = 0
@@ -2496,7 +2511,7 @@ End Function
 '   161: Invalid address
 ' ==============================================================================
 Public Function JNZ(ByVal op1 As String) As Long
-    If HlpTestCondition("NZ") Then
+    If HlpEvaluateCondition("JNZ") Then
         JNZ = JMP(op1)
     Else
         JNZ = 0
@@ -2527,7 +2542,7 @@ End Function
 '   171: Invalid address
 ' ==============================================================================
 Public Function JC(ByVal op1 As String) As Long
-    If HlpTestCondition("C") Then
+    If HlpEvaluateCondition("JC") Then
         JC = JMP(op1)
     Else
         JC = 0
@@ -2557,7 +2572,7 @@ End Function
 '   181: Invalid address
 ' ==============================================================================
 Public Function JNC(ByVal op1 As String) As Long
-    If HlpTestCondition("NC") Then
+    If HlpEvaluateCondition("JNC") Then
         JNC = JMP(op1)
     Else
         JNC = 0
@@ -2585,7 +2600,7 @@ End Function
 '   211: Invalid address
 ' ==============================================================================
 Public Function JM(ByVal op1 As String) As Long
-    If HlpTestCondition("M") Then
+    If HlpEvaluateCondition("JM") Then
         JM = JMP(op1)
     Else
         JM = 0
@@ -2616,7 +2631,7 @@ End Function
 ' ==============================================================================
 Public Function JP(ByVal op1 As String, Optional ByVal op2 As String = "") As Long
     '8080 instruction for jump if plus
-    Dim condition As String: condition = "P"
+    Dim condition As String: condition = "JP"
     'Z80 instruction for general jump conditions based on op1
     If op2 <> "" Then
        
@@ -2632,17 +2647,31 @@ Public Function JP(ByVal op1 As String, Optional ByVal op2 As String = "") As Lo
             Exit Function
         End If
         
-        ' Z80 conditional: JP NZ,addr  JP C,addr  etc.
-        condition = UCase$(op1)
-        
+        If op1 = "C" Then condition = "JC"
+        If op1 = "M" Then condition = "JM"
+        If op1 = "NC" Then condition = "JNC"
+        If op1 = "NZ" Then condition = "JNZ"
+        If op1 = "P" Then condition = "JP"
+        If op1 = "PE" Then condition = "JPE"
+        If op1 = "PO" Then condition = "JPO"
+        If op1 = "Z" Then condition = "JZ"
         op1 = op2
     End If
     
-    If HlpTestCondition(condition) Then
+    If HlpEvaluateCondition(condition) Then
         JP = JMP(op1)
     Else
         JP = 0
     End If
+End Function
+' --- JP ---
+Public Function JP_indirect(ByVal op1 As String) As Long
+    Dim errorBase As Long: errorBase = 305
+    If op1 = "(HL)" Then
+        JP_indirect = PCHL()
+    End If
+    
+
 End Function
 
 ' ==============================================================================
@@ -2665,7 +2694,7 @@ End Function
 '   231: Invalid address
 ' ==============================================================================
 Public Function JPE(ByVal op1 As String) As Long
-    If HlpTestCondition("PE") Then
+    If HlpEvaluateCondition("JPE") Then
         JPE = JMP(op1)
     Else
         JPE = 0
@@ -2693,7 +2722,7 @@ End Function
 '   241: Invalid address
 ' ==============================================================================
 Public Function JPO(ByVal op1 As String) As Long
-    If HlpTestCondition("PO") Then
+    If HlpEvaluateCondition("JPO") Then
         JPO = JMP(op1)
     Else
         JPO = 0
@@ -4131,6 +4160,21 @@ End Function
 '                         Helper Utilities
 '==============================================================================
 
+' Evaluates jump conditions against flags
+Private Function HlpEvaluateCondition(ByVal opcode As String) As Boolean
+    Select Case opcode
+        Case "JZ":  HlpEvaluateCondition = (pFlags("Zero") = 1)
+        Case "JNZ": HlpEvaluateCondition = (pFlags("Zero") = 0)
+        Case "JC":  HlpEvaluateCondition = (pFlags("Carry") = 1)
+        Case "JNC": HlpEvaluateCondition = (pFlags("Carry") = 0)
+        Case "JM":  HlpEvaluateCondition = (pFlags("Sign") = 1)
+        Case "JP":  HlpEvaluateCondition = (pFlags("Sign") = 0)
+        Case "JPE": HlpEvaluateCondition = (pFlags("Parity") = 1)
+        Case "JPO": HlpEvaluateCondition = (pFlags("Parity") = 0)
+    End Select
+End Function
+' ---  ---
+
 Private Function HlpTestCondition(ByVal cond As String) As Boolean
     Select Case cond
         Case "Z":  HlpTestCondition = (pFlags("Zero") = 1)
@@ -5466,8 +5510,6 @@ Option Explicit
 ' Module:       modGlobals
 '================================================================================
 
-Public Const MEM_START_DEFAULT = "100"
-
 ' --- Shared execution cache (replaces the Private vars in decAssemble) ---
 ' These were Private in decAssemble purely because it was the only engine.
 ' Now that two engines share the same grid they belong here as Public.
@@ -5509,12 +5551,10 @@ Public Const ERR_EXEC_END  As Long = -200
 Public Const ERR_BAD_OPCODE As Long = -9999
 Public Const ERR_MAX_ITERS As Long = -9998
 Public Const ERR_STOP As Long = -9997
-' --- KERNAL trap sentinel ---
-Public Const KERNAL_NOT_TRAPPED As Long = &H7FFFFFFF   ' TryKernalTrap returns this if no trap matched
+
 Public gMemHighWater As Long   ' highest address written by last compile; 0 = unknown
 Public gSuppressConsoleUI As Boolean
 Public gSuppressUI As Boolean   ' True during test runner batch execution
-
 '------------------------------------------------------------------------------
 ' gCPU
 ' Returns the shared CPU instance, creating it if necessary.
@@ -5670,7 +5710,6 @@ Public Function usrValIsHexString(ByVal hexValue As String) As Boolean
     hexValue = Trim$(hexValue)                      ' Remove leading/trailing spaces
     hexValue = UCase$(hexValue)                     ' Convert to uppercase
     hexValue = Replace(hexValue, "H", "")           ' Remove trailing "H" if present
-    If Left$(hexValue, 1) = "$" Then hexValue = Mid$(hexValue, 2)  ' Strip 6510 $ prefix
     
     ' Step 2: Check length
     length = Len(hexValue)
@@ -5688,6 +5727,7 @@ Public Function usrValIsHexString(ByVal hexValue As String) As Boolean
     End If
     
     ' Step 4: Validate hex digits (0-9, A-F only)
+    ' Pattern: "*[!0-9a-fA-F]*" matches any character that is NOT hex
     If hexValue Like "*[!0-9A-F]*" Then
         usrValIsHexString = False
     Else
@@ -6299,14 +6339,15 @@ Public Function usrHexToDec(ByVal hexStr As String) As Long
     hexStr = Trim$(hexStr)                      ' Remove leading/trailing spaces
     hexStr = UCase$(hexStr)                     ' Convert to uppercase
     hexStr = Replace(hexStr, "H", "")           ' Remove trailing "H" if present
-    If Left$(hexStr, 1) = "$" Then hexStr = Mid$(hexStr, 2)  ' Strip 6510 $ prefix
     
     ' Step 2: Convert hex string to decimal
+    ' Val() with "&H" prefix tells VBA to interpret as hex
     usrHexToDec = val("&H" & hexStr)
     
     Exit Function
     
 ErrorHandler:
+    ' Return 0 on any error (invalid hex, empty string, etc.)
     usrHexToDec = 0
 End Function
 '------------------------------------------------------------------------------
@@ -6552,14 +6593,6 @@ Public Sub RefreshMemoryTable()
 
 End Sub
 
-Public Function getMem(memAddrHex As String) As String
-    
-    If Not pMemory Is Nothing Then
-        getMem = pMemory.addr(usrHexToDec(memAddrHex))
-    Else
-        getMem = 0
-    End If
-End Function
 '================================================================================
 ' Module:       modGlobals
 '================================================================================
@@ -6793,15 +6826,10 @@ Public Sub Execute8080()
     Range("errMessage").value = ""
 
     ' check first and only first line for an org opcode to set global memory location
-    If reset = 1 Then
-        Dim appCalc As Boolean: appCalc = False
-        Dim memCheck As Long: memCheck = usrHexToDec(MEM_START_DEFAULT)
-        If Range("Line0").offset(0, ofs_opcode) = "ORG" Then
-            op1 = Range("Line0").offset(0, ofs_op1).value
-            memCheck = usrHexToDec(op1)
-        End If
-        If usrHexToDec(Range("MemStart").value) <> memCheck Then
-            Range("MemStart").value = Hex$(memCheck)
+    If Range("Line0").offset(0, ofs_opcode) = "ORG" And reset = 1 Then
+        op1 = Range("Line0").offset(0, ofs_op1).value
+        If usrValIsHexString(op1) Then
+            Range("MemStart").value = op1
             Application.Calculate
         End If
     End If
@@ -9643,12 +9671,12 @@ Public Function RunOpcode(ByVal opcode As String, _
         '----------------------------------------------------------------------
         ' Load / Store
         '----------------------------------------------------------------------
-        Case "LDA": result = Me.LDA(HlpMergeOp(op1, op2))
-        Case "LDX": result = Me.LDX(HlpMergeOp(op1, op2))
-        Case "LDY": result = Me.LDY(HlpMergeOp(op1, op2))
-        Case "STA": result = Me.STA(HlpMergeOp(op1, op2))
-        Case "STX": result = Me.STX(HlpMergeOp(op1, op2))
-        Case "STY": result = Me.STY(HlpMergeOp(op1, op2))
+        Case "LDA": result = Me.LDA(op1)
+        Case "LDX": result = Me.LDX(op1)
+        Case "LDY": result = Me.LDY(op1)
+        Case "STA": result = Me.STA(op1)
+        Case "STX": result = Me.STX(op1)
+        Case "STY": result = Me.STY(op1)
 
         '----------------------------------------------------------------------
         ' Register transfers
@@ -9671,37 +9699,38 @@ Public Function RunOpcode(ByVal opcode As String, _
         '----------------------------------------------------------------------
         ' Arithmetic
         '----------------------------------------------------------------------
-        Case "ADC": result = Me.ADC(HlpMergeOp(op1, op2))
-        Case "SBC": result = Me.SBC(HlpMergeOp(op1, op2))
-        Case "INC": result = Me.INC(HlpMergeOp(op1, op2))
+        Case "ADC": result = Me.ADC(op1)
+        Case "SBC": result = Me.SBC(op1)
+        Case "INC": result = Me.INC(op1)
         Case "INX": result = Me.INX()
         Case "INY": result = Me.INY()
-        Case "DEC": result = Me.DEC(HlpMergeOp(op1, op2))
+        Case "DEC": result = Me.DEC(op1)
         Case "DEX": result = Me.DEX()
         Case "DEY": result = Me.DEY()
 
         '----------------------------------------------------------------------
         ' Logical
         '----------------------------------------------------------------------
-        Case "AND": result = Me.AND_(HlpMergeOp(op1, op2))
-        Case "ORA": result = Me.ORA(HlpMergeOp(op1, op2))
-        Case "EOR": result = Me.EOR(HlpMergeOp(op1, op2))
-        Case "BIT": result = Me.BIT(HlpMergeOp(op1, op2))
-        
+        Case "AND": result = Me.AND_(op1)
+        Case "ORA": result = Me.ORA(op1)
+        Case "EOR": result = Me.EOR(op1)
+        Case "BIT": result = Me.BIT(op1)
+
         '----------------------------------------------------------------------
         ' Shifts & Rotates
         '----------------------------------------------------------------------
-        Case "ASL": result = Me.ASL(HlpMergeOp(op1, op2))
-        Case "LSR": result = Me.LSR(HlpMergeOp(op1, op2))
-        Case "ROL": result = Me.ROL(HlpMergeOp(op1, op2))
-        Case "ROR": result = Me.ROR(HlpMergeOp(op1, op2))
-        
+        Case "ASL": result = Me.ASL(op1)
+        Case "LSR": result = Me.LSR(op1)
+        Case "ROL": result = Me.ROL(op1)
+        Case "ROR": result = Me.ROR(op1)
+
         '----------------------------------------------------------------------
         ' Compare
         '----------------------------------------------------------------------
-        Case "CMP": result = Me.CMP(HlpMergeOp(op1, op2))
-        Case "CPX": result = Me.CPX(HlpMergeOp(op1, op2))
-        Case "CPY": result = Me.CPY(HlpMergeOp(op1, op2))
+        Case "CMP": result = Me.CMP(op1)
+        Case "CPX": result = Me.CPX(op1)
+        Case "CPY": result = Me.CPY(op1)
+
         '----------------------------------------------------------------------
         ' Branches (all relative; op1 = target label or hex offset)
         '----------------------------------------------------------------------
@@ -10922,27 +10951,6 @@ Private Function HlpStackPull() As Byte
 End Function
 
 '------------------------------------------------------------------------------
-' HlpMergeOp
-' Merges op2 (index register X or Y) into op1 to form the canonical
-' addressing mode string expected by HlpEffectiveAddress.
-'
-' Examples:
-'   op1="0901"  op2="X"  ->  "0901,X"
-'   op1="42"    op2="Y"  ->  "42,Y"
-'   op1="0901"  op2=""   ->  "0901"      (no change)
-'   op1="(42,X)" op2=""  ->  "(42,X)"   (already encoded, no change)
-'   op1="#41"   op2=""   ->  "#41"       (immediate, no change)
-'------------------------------------------------------------------------------
-Private Function HlpMergeOp(ByVal op1 As String, ByVal op2 As String) As String
-    op2 = Trim$(UCase$(op2))
-    If (op2 = "X" Or op2 = "Y") And InStr(op1, ",") = 0 Then
-        HlpMergeOp = op1 & "," & op2
-    Else
-        HlpMergeOp = op1
-    End If
-End Function
-
-'------------------------------------------------------------------------------
 ' SetError  (mirrors clsDecCPU.SetError)
 '------------------------------------------------------------------------------
 Private Sub SetError(ByVal code As Long, ByVal msg As String)
@@ -10956,7 +10964,6 @@ End Sub
 Public Sub ResetStack()
     Set pStack = New clsDecStack
 End Sub
-
 
 '================================================================================
 ' END cls6510CPU
@@ -11012,7 +11019,7 @@ Public Sub Execute6510()
 
     Dim memStart As Long: memStart = usrHexToDec(CStr(wsCPU.Range("MemStart").value))
     Dim memEnd   As Long: memEnd = memStart + usrHexToDec(CStr(wsCPU.Range("MemSize").value))
-    Dim debugMode As Boolean: debugMode = (CLng(Range("Debug").value) = 1)
+    Dim debugMode As Boolean: debugMode = (CLng(wsCPU.Range("Debug").value) = 1)
 
     '--- Run state ---
     Dim myCpu            As cls6510cpu
@@ -11028,28 +11035,17 @@ Public Sub Execute6510()
     wsCPU.Range("Error").value = 0
     wsCPU.Range("errMessage").value = ""
 
-'--- ORG on first line (same as Execute8080) ---
-    If doReset Then
-        Dim memCheck As Long: memCheck = usrHexToDec(MEM_START_DEFAULT)
-        Dim memCurrent As Long: memCurrent = usrHexToDec(wsCPU.Range("MemStart").value)
-        If UCase$(CStr(wsCPU.Range("Line0").offset(0, ofs_opcode).value)) = "ORG" Then
-            Dim orgVal As String: orgVal = CStr(wsCPU.Range("Line0").offset(0, ofs_op1).value)
-            If usrValIsHexString(orgVal) Then
-                ' Strip $ before writing to sheet so MemStart stays as bare hex (e.g. "0300")
-                Dim orgValBare As String: orgValBare = orgVal
-                If Left$(orgValBare, 1) = "$" Then orgValBare = Mid$(orgValBare, 2)
-                memCheck = usrHexToDec(orgValBare)
-            End If
-            If memCheck <> memCurrent Then
-                wsCPU.Range("MemStart").value = Hex$(memCheck)
-                Range("MemStart").value = Hex$(memCheck)
-                Application.Calculate
-                memStart = usrHexToDec(memCheck)
-                memEnd = memStart + usrHexToDec(CStr(wsCPU.Range("MemSize").value))
-            End If
+    '--- ORG on first line (same as Execute8080) ---
+    If UCase$(CStr(wsCPU.Range("Line0").offset(0, ofs_opcode).value)) = "ORG" And doReset Then
+        Dim orgVal As String: orgVal = CStr(wsCPU.Range("Line0").offset(0, ofs_op1).value)
+        If usrValIsHexString(orgVal) Then
+            wsCPU.Range("MemStart").value = orgVal
+            Application.Calculate
+            memStart = usrHexToDec(orgVal)
+            memEnd = memStart + usrHexToDec(CStr(wsCPU.Range("MemSize").value))
         End If
     End If
-    
+
     '--- Reset vs continue ---
     Set myCpu = g6510
     
@@ -11062,7 +11058,6 @@ Public Sub Execute6510()
     If doReset Then
         If TraceEnabled() Then TraceClear
         InvalidateExecCache                  ' shared cache in modGlobals
-        usrMemReset
         ResetDecCPU6510
         Set myCpu = g6510
         ResetAddressList
@@ -11078,7 +11073,7 @@ Public Sub Execute6510()
         wsCPU.Range("StackStart").value = "01FF"
         wsCPU.Range("StackDetails").ClearContents
 
-        If stepMode Or debugMode Then
+        If stepMode Then
             RefreshFlags6510 myCpu
             RefreshRegisters6510 myCpu
             myCpu.RefreshStack True
@@ -11224,35 +11219,10 @@ Public Sub Execute6510()
                 RefreshRegisters6510 myCpu
                 RefreshFlags6510 myCpu
                 Application.Calculate
-                Debug.Print
-                Debug.Print "opcode", "op1", "op2"
-                Debug.Print opcode, op1, op2
-                Debug.Print "PC", "A", "X", "Y", "SP", "C", "N", "V", "B", "D", "I"
-                Debug.Print myCpu.Reg("PC"), myCpu.Reg("A"), myCpu.Reg("X"), myCpu.Reg("Y"), myCpu.Reg("SP")
                 Debug.Assert Not debugMode
             End If
             
-'--- KERNAL trap intercept (6510 only) ---
-            Dim trapHandled As Boolean: trapHandled = False
-            If opcode = "JSR" Then
-                Dim trapTarget As Long
-                trapTarget = 0
-                ' Resolve the JSR target to a numeric address
-                If usrValIsHexString(op1) Then
-                    trapTarget = usrHexToDec(op1) And &HFFFF&
-                End If
-                If trapTarget > 0 Then
-                    Dim trapResult As Long
-                    trapResult = TryKernalTrap(myCpu, trapTarget)
-                    If trapResult <> KERNAL_NOT_TRAPPED Then
-                        errcode = IIf(trapResult = 0, 0, trapResult)
-                        trapHandled = True
-                    End If
-                End If
-            End If
-            If Not trapHandled Then
-                errcode = myCpu.RunOpcode(opcode, op1, op2, label)
-            End If
+            errcode = myCpu.RunOpcode(opcode, op1, op2, label)
             executedThisIter = True
 
             '--- Trace: post-execution snapshot ---
@@ -11392,12 +11362,6 @@ Public Sub RefreshFlags6510(ByRef myCpu As cls6510cpu)
     myCpu.FlagsDirty = False
 End Sub
 
-Private Sub DebugPrintRegisters(ByRef inCpu As cls6510cpu)
-    Dim myCpu As cls6510cpu
-    Set myCpu = inCpu
-    Debug.Print "PC", "A", "X", "Y", "SP", "C", "N", "V", "B", "D", "I"
-    Debug.Print myCpu.Reg("PC"), myCpu.Reg("A"), myCpu.Reg("X"), myCpu.Reg("Y"), myCpu.Reg("SP")
-End Sub
 
 ''' Component: Sheet11
 ''' [No code]
@@ -12699,165 +12663,3 @@ Private Sub Test6510_DBToBytes()
     Chk 5, HlpGetInstructionSize("DB", "Hello", "", "8080"), "8080 DB Hello = 5"
     Chk 12, HlpGetInstructionSize("DB", "Hello World!", "", "8080"), "8080 DB 12 chars = 12"
 End Sub
-
-''' Component: mod6510KernalTraps
-Option Explicit
-'================================================================================
-' Module:       mod6510KernalTraps
-' Purpose:      Intercepts JSR calls to C64 KERNAL ROM vectors and emulates
-'               their side-effects inside the Excel CPU emulator without
-'               requiring actual ROM bytes in the memory table.
-'
-' How it works:
-'   Execute6510 calls TryKernalTrap(cpu, targetAddress) before every JSR.
-'   If the address is in gKernalTraps, the corresponding handler runs and
-'   returns 0 (continue) or an ERR_* code (halt).
-'   If the address is NOT in gKernalTraps, KERNAL_NOT_TRAPPED is returned
-'   and Execute6510 falls through to the normal myCpu.RunOpcode path.
-'
-'   Trap handlers must leave the stack exactly as a real RTS would find it,
-'   i.e. they must NOT push/pop the stack — Execute6510 still executes the
-'   JSR opcode via RunOpcode if the trap needs the normal call discipline.
-'   For "stub" traps (pure side-effect, no actual execution), the handler
-'   calls KernalStubRTS to simulate the JSR + RTS stack round-trip.
-'
-' KERNAL vectors handled:
-'   $FFD2  CHROUT  — write character in A to virtual console
-'   $FFE4  GETIN   — return 0x00 in A (no keyboard)
-'   $FF9F  SCNKEY  — no-op (keyboard scan)
-'   $FFE1  STOP    — clear A, return (no STOP key pressed)
-'   $FF81  SCINIT  — no-op (screen init)
-'   $FF84  IOINIT  — no-op (I/O init)
-'   $FF87  RAMTAS  — no-op (RAM test)
-'   $FF8A  RESTOR  — no-op (restore vectors)
-'   $FF8D  VECTOR  — no-op (read/set vectors)
-'   $FFB7  READST  — return 0 in A (status = OK)
-'   $FFBA  SETLFS  — no-op (set logical file)
-'   $FFBD  SETNAM  — no-op (set filename)
-'   $FFC0  OPEN    — no-op (open file)
-'   $FFC3  CLOSE   — no-op (close file)
-'   $FFC6  CHKIN   — no-op (set input channel)
-'   $FFC9  CHKOUT  — no-op (set output channel)
-'   $FFCC  CLRCHN  — no-op (clear channels)
-'   $FFD5  LOAD    — no-op stub
-'   $FFD8  SAVE    — no-op stub
-'================================================================================
-
-'------------------------------------------------------------------------------
-' TryKernalTrap
-' Called by Execute6510 before every JSR.
-' Returns: 0            = trap handled, continue execution
-'          ERR_EXEC_END = trap signalled halt
-'          KERNAL_NOT_TRAPPED = no trap matched, fall through to RunOpcode
-'------------------------------------------------------------------------------
-Public Function TryKernalTrap(ByRef cpu As cls6510cpu, _
-                               ByVal targetAddr As Long) As Long
-    Select Case (targetAddr And &HFFFF&)
-
-        Case &HFFD2&   ' CHROUT — output char in A
-            TryKernalTrap = Trap_CHROUT(cpu)
-
-        Case &HFFE4&   ' GETIN — return key (0 = none)
-            cpu.SetReg "A", 0
-            TryKernalTrap = Trap_NoOp(cpu)
-
-        Case &HFF9F&   ' SCNKEY — keyboard scan (no-op)
-            TryKernalTrap = Trap_NoOp(cpu)
-
-        Case &HFFE1&   ' STOP — clear A, Z=1, no stop (no-op)
-            cpu.SetReg "A", 0
-            TryKernalTrap = Trap_NoOp(cpu)
-
-        Case &HFF81&   ' SCINIT
-            TryKernalTrap = Trap_NoOp(cpu)
-
-        Case &HFF84&   ' IOINIT
-            TryKernalTrap = Trap_NoOp(cpu)
-
-        Case &HFF87&   ' RAMTAS
-            TryKernalTrap = Trap_NoOp(cpu)
-
-        Case &HFF8A&   ' RESTOR
-            TryKernalTrap = Trap_NoOp(cpu)
-
-        Case &HFF8D&   ' VECTOR
-            TryKernalTrap = Trap_NoOp(cpu)
-
-        Case &HFFB7&   ' READST — status register -> A = 0 (OK)
-            cpu.SetReg "A", 0
-            TryKernalTrap = Trap_NoOp(cpu)
-
-        Case &HFFBA&   ' SETLFS
-            TryKernalTrap = Trap_NoOp(cpu)
-
-        Case &HFFBD&   ' SETNAM
-            TryKernalTrap = Trap_NoOp(cpu)
-
-        Case &HFFC0&   ' OPEN
-            TryKernalTrap = Trap_NoOp(cpu)
-
-        Case &HFFC3&   ' CLOSE
-            TryKernalTrap = Trap_NoOp(cpu)
-
-        Case &HFFC6&   ' CHKIN
-            TryKernalTrap = Trap_NoOp(cpu)
-
-        Case &HFFC9&   ' CHKOUT
-            TryKernalTrap = Trap_NoOp(cpu)
-
-        Case &HFFCC&   ' CLRCHN
-            TryKernalTrap = Trap_NoOp(cpu)
-
-        Case &HFFD5&   ' LOAD stub
-            TryKernalTrap = Trap_NoOp(cpu)
-
-        Case &HFFD8&   ' SAVE stub
-            TryKernalTrap = Trap_NoOp(cpu)
-
-        Case Else
-            TryKernalTrap = KERNAL_NOT_TRAPPED
-
-    End Select
-End Function
-
-'------------------------------------------------------------------------------
-' Trap_CHROUT
-' Emulates KERNAL $FFD2: output the character in A to the virtual console.
-' The real KERNAL does JSR + RTS; we simulate that without touching the
-' program-visible stack by handling the side-effect and returning normally.
-'------------------------------------------------------------------------------
-Private Function Trap_CHROUT(ByRef cpu As cls6510cpu) As Long
-    Dim ch As Long
-    ch = cpu.Reg("A") And &HFF&
- 
-    Select Case ch
-Case 13, 10   ' CR / LF -> newline in console
-            usrForm.ConPrtLn ""
-        Case 147      ' CLR/HOME -> clear console
-            usrForm.ClearConsole
-        Case 17, 145  ' cursor down / up — ignore
-            ' no-op
-        Case 18, 146  ' RVS ON / RVS OFF — ignore
-            ' no-op
-        Case 20        ' DEL — ignore
-            ' no-op
-        Case Else
-            If ch >= 32 And ch <= 126 Then
-                usrForm.ConPrt Chr$(ch)
-            ElseIf ch >= 193 And ch <= 218 Then
-                usrForm.ConPrt Chr$(ch - 128)
-            End If
-    End Select
-
-    Trap_CHROUT = 0   ' continue execution
-End Function
-
-'------------------------------------------------------------------------------
-' Trap_NoOp
-' Handles KERNAL routines that have no visible side-effect in the emulator.
-' Simply returns 0 so Execute6510 continues without calling RunOpcode.
-'------------------------------------------------------------------------------
-Private Function Trap_NoOp(ByRef cpu As cls6510cpu) As Long
-    Trap_NoOp = 0
-End Function
-
